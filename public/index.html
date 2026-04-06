@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HaxBall Clone</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <div id="ui-layer">
+        <!-- Landing Page -->
+        <div id="landing-modal" class="modal active">
+            <h1 class="logo">PITCH<span>BLITZ</span></h1>
+            <p class="subtitle">No Pitch, No Pulse. Pure Physics Soccer.</p>
+            <button id="btn-play-now" class="btn primary">Play Now</button>
+        </div>
+
+        <!-- Nickname Modal -->
+        <div id="nickname-modal" class="modal">
+            <h2>Player Profile</h2>
+            <p>Customize your avatar.</p>
+            <div class="profile-preview">
+                <canvas id="preview-canvas" width="80" height="80"></canvas>
+            </div>
+            <div class="input-group">
+                <label>Nickname</label>
+                <input type="text" id="input-nickname" maxlength="5" placeholder="e.g., MESSI" autocomplete="off" />
+            </div>
+            <div class="input-group">
+                <label>Jersey Number</label>
+                <input type="number" id="input-number" min="0" max="99" value="10" />
+            </div>
+            <div class="input-group">
+                <label>Country Flag</label>
+                <select id="input-flag">
+                    <option value="🏳️">None (🏳️)</option>
+                    <option value="🇦🇷">Argentina (🇦🇷)</option>
+                    <option value="🇧🇷">Brazil (🇧🇷)</option>
+                    <option value="🇺🇸">USA (🇺🇸)</option>
+                    <option value="🇪🇸">Spain (🇪🇸)</option>
+                    <option value="🇫🇷">France (🇫🇷)</option>
+                    <option value="🇩🇪">Germany (🇩🇪)</option>
+                    <option value="🇮🇹">Italy (🇮🇹)</option>
+                    <option value="🏴󠁧󠁢󠁥󠁮󠁧󠁿">England (🏴󠁧󠁢󠁥󠁮󠁧󠁿)</option>
+                    <option value="🇺🇾">Uruguay (🇺🇾)</option>
+                    <option value="🇲🇽">Mexico (🇲🇽)</option>
+                    <option value="🇨🇴">Colombia (🇨🇴)</option>
+                    <option value="🇨🇱">Chile (🇨🇱)</option>
+                    <option value="🇵🇪">Peru (🇵🇪)</option>
+                </select>
+            </div>
+            <button id="btn-submit-nickname" class="btn secondary">Continue</button>
+        </div>
+
+        <!-- Room List Modal -->
+        <div id="room-list-modal" class="modal large">
+            <h2>Room List</h2>
+            <div class="room-controls">
+                <button id="btn-refresh-rooms" class="btn secondary">Refresh</button>
+                <button id="btn-open-create-room" class="btn primary">Create Room</button>
+            </div>
+            <div class="table-container">
+                <table id="rooms-table">
+                    <thead>
+                        <tr>
+                            <th>Room Name</th>
+                            <th>Players</th>
+                            <th>Password</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="rooms-tbody">
+                        <!-- Populated by JS -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Create Room Modal -->
+        <div id="create-room-modal" class="modal">
+            <h2>Create Room</h2>
+            <div class="input-group">
+                <label>Room Name</label>
+                <input type="text" id="input-room-name" placeholder="My Awesome Room" maxlength="20"/>
+            </div>
+            <div class="input-group">
+                <label>Password (Optional)</label>
+                <input type="password" id="input-room-password" placeholder="Leave empty for public" />
+            </div>
+            <div class="input-group">
+                <label>Max Players</label>
+                <input type="number" id="input-room-max" value="10" min="2" max="22" />
+            </div>
+            <div class="input-group">
+                <label>Game Mode</label>
+                <select id="input-room-mode">
+                    <option value="single">Single Match</option>
+                    <option value="tournament">2v2 Tournament</option>
+                </select>
+            </div>
+            <div class="input-group hidden" id="tourney-teams-group">
+                <label>Number of Teams</label>
+                <select id="input-tourney-teams">
+                    <option value="4">4 Teams (Semi-finals)</option>
+                    <option value="8">8 Teams (Quarter-finals)</option>
+                </select>
+            </div>
+            <div class="modal-actions">
+                <button id="btn-cancel-create" class="btn ghost">Cancel</button>
+                <button id="btn-create-room" class="btn primary">Create</button>
+            </div>
+        </div>
+
+        <!-- Room Lobby Modal -->
+        <div id="room-lobby-modal" class="modal x-large">
+            <div class="lobby-header">
+                <h2 id="lobby-room-name">Room Name</h2>
+                <button id="btn-lobby-leave" class="btn ghost small">Leave</button>
+            </div>
+            <div class="lobby-container">
+                <div class="team-column red-col">
+                    <div class="team-header red-header">Red</div>
+                    <ul id="lobby-red-list" class="player-list"></ul>
+                </div>
+                <div class="team-column spec-col">
+                    <div class="team-header spec-header">Spectators</div>
+                    <ul id="lobby-spec-list" class="player-list"></ul>
+                </div>
+                <div class="team-column blue-col">
+                    <div class="team-header blue-header">Blue</div>
+                    <ul id="lobby-blue-list" class="player-list"></ul>
+                </div>
+            </div>
+            <div class="admin-controls hidden" id="admin-controls-panel">
+                <button id="btn-start-game" class="btn primary w-full">Start Game</button>
+                <div class="input-group inline">
+                    <label>Time Limit</label>
+                    <input type="number" id="input-time-limit" value="3" min="1" max="15" />
+                </div>
+                <div class="input-group inline">
+                    <label>Score Limit</label>
+                    <input type="number" id="input-score-limit" value="3" min="1" max="10" />
+                </div>
+            </div>
+        </div>
+
+        <!-- Tournament Bracket UI -->
+        <div id="bracket-layer" class="hidden">
+            <h1 class="bracket-title">Tournament Bracket</h1>
+            <div class="bracket-container" id="bracket-container">
+                <!-- Javascript will map out matches here -->
+            </div>
+            <button id="btn-advance-bracket" class="btn primary hidden">Start Next Match</button>
+        </div>
+    </div>
+
+    <!-- Password Prompt -->
+    <div id="password-modal" class="modal mini" style="display: none;">
+        <h2>Enter Password</h2>
+        <div class="input-group">
+            <input type="password" id="input-join-password" placeholder="Password required" />
+        </div>
+        <div class="modal-actions">
+            <button id="btn-cancel-password" class="btn ghost">Cancel</button>
+            <button id="btn-submit-password" class="btn primary">Join</button>
+        </div>
+    </div>
+
+
+    <div id="game-layer" class="hidden">
+        <div class="game-ui">
+            <div class="score-board">
+                <div class="team red">RED <span id="score-red">0</span></div>
+                <div class="timer" id="game-timer">00:00</div>
+                <div class="team blue"><span id="score-blue">0</span> BLUE</div>
+            </div>
+            <div id="tournament-banner" class="hidden">
+                Aggregate: RED <span id="agg-red">0</span> - <span id="agg-blue">0</span> BLUE <br>
+                <span id="tourney-leg">Leg 1</span>
+            </div>
+            <button id="btn-leave-room" class="btn ghost small">Back to Lobby</button>
+        </div>
+        <canvas id="game-canvas"></canvas>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="client.js"></script>
+</body>
+</html>
