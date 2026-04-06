@@ -73,7 +73,8 @@ document.getElementById('btn-submit-nickname').onclick = () => {
 
 document.getElementById('input-room-mode').addEventListener('change', (e) => {
     const isTourney = e.target.value === 'tournament';
-    document.getElementById('tourney-teams-group').style.display = isTourney ? 'flex' : 'none';
+    if (isTourney) document.getElementById('tourney-teams-group').classList.remove('hidden');
+    else document.getElementById('tourney-teams-group').classList.add('hidden');
 });
 
 document.getElementById('btn-refresh-rooms').onclick = loadRooms;
@@ -285,7 +286,16 @@ window.addEventListener('resize', resizeCanvas);
 let gameState = null;
 socket.on('gameState', state => {
     if (gameStatus !== 'PLAYING') return;
-    gameState = state;
+
+    // Show event overlay if present
+    const overlay = document.getElementById('game-event-overlay');
+    if (state.eventMsg) {
+        document.getElementById('game-event-text').innerText = state.eventMsg;
+        overlay.classList.remove('hidden');
+    } else {
+        overlay.classList.add('hidden');
+    }
+
     document.getElementById('score-red').innerText = state.score.red;
     document.getElementById('score-blue').innerText = state.score.blue;
     

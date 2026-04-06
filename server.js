@@ -217,6 +217,13 @@ function broadcastLobbyUpdate(room) {
 function leaveRoom(socket, roomId) {
     const room = ROOMS.get(roomId);
     if (!room) return;
+    
+    const p = room.players.get(socket.id);
+    if (p && room.status === 'PLAYING' && p.team !== 'spec') {
+        room.eventMsg = `${p.nickname} Left!`;
+        room.goalPause = 180; // Pause for 3s
+    }
+    
     room.players.delete(socket.id);
     socket.leave(roomId);
     
@@ -251,7 +258,8 @@ setInterval(() => {
             ball: room.ball,
             players: Array.from(room.players.values()).filter(p => ['red','blue'].includes(p.team)),
             score: room.score,
-            tournament: room.mode === 'tournament' ? room.tournament : null
+            tournament: room.mode === 'tournament' ? room.tournament : null,
+            eventMsg: room.eventMsg || ''
         };
         io.to(room.id).emit('gameState', state);
     });
@@ -411,8 +419,19 @@ function getBracketData(room) {
 // ----- End Bracket Logic -----
 
 function updatePhysics(room) {
+    if (room.goalPause && room.goalPause > 0) {
+        room.goalPause--;
+        if (room.goalPause <= 0) {
+            room.eventMsg = '';
+            resetPositions(room);
+        }
+        return; // Physics frozen
+    }
+
     // players physics
     for (let player of room.players.values()) {
+        if (!player || !player.inputs) continue; // CRASH PROTECTION
+        
         player.vx *= PLAYER_FRICTION;
         player.vy *= PLAYER_FRICTION;
         
@@ -444,8 +463,8 @@ function updatePhysics(room) {
         }
         resolveCollision(activePlayers[i], room.ball, 'player_ball');
         
-        // Handle kick input
-        if (activePlayers[i].inputs.kick) {
+        // Handle kick input (CRASH PROTECTION INCLUDED)
+        if (activePlayers[i] && activePlayers[i].inputs && activePlayers[i].inputs.kick) {
             const dx = room.ball.x - activePlayers[i].x;
             const dy = room.ball.y - activePlayers[i].y;
             const dist = Math.sqrt(dx*dx + dy*dy);
@@ -467,7 +486,8 @@ function updatePhysics(room) {
     if (room.ball.x < room.ball.radius) {
         if (room.ball.y > GOAL_TOP && room.ball.y < GOAL_BOTTOM) {
             room.score.blue++;
-            resetPositions(room);
+            room.eventMsg = "GOAL BLUE!";
+            room.goalPause = 180;
         } else {
             room.ball.x = room.ball.radius;
             room.ball.vx *= -1;
@@ -476,7 +496,8 @@ function updatePhysics(room) {
     if (room.ball.x > FIELD_WIDTH - room.ball.radius) {
         if (room.ball.y > GOAL_TOP && room.ball.y < GOAL_BOTTOM) {
             room.score.red++;
-            resetPositions(room);
+            room.eventMsg = "GOAL RED!";
+            room.goalPause = 180;
         } else {
             room.ball.x = FIELD_WIDTH - room.ball.radius;
             room.ball.vx *= -1;
