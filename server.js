@@ -180,14 +180,14 @@ io.on('connection', socket => {
     });
 });
 
-function joinRoom(socket, roomId, nickname, color, number) {
+function joinRoom(socket, roomId, nickname, flag, number) {
     const room = ROOMS.get(roomId);
     socket.join(roomId);
 
     room.players.set(socket.id, {
         id: socket.id,
         nickname,
-        color,
+        flag,
         number,
         team: 'spec',
         x: FIELD_WIDTH / 2,
@@ -208,7 +208,8 @@ function broadcastLobbyUpdate(room) {
                 id: p.id,
                 nickname: p.nickname,
                 team: p.team,
-                number: p.number
+                number: p.number,
+                flag: p.flag
             }))
         });
     }
@@ -256,7 +257,9 @@ setInterval(() => {
         const state = {
             timeRemaining: room.timeRemaining,
             ball: room.ball,
-            players: Array.from(room.players.values()).filter(p => ['red','blue'].includes(p.team)),
+            players: Array.from(room.players.values()).filter(p => ['red','blue'].includes(p.team)).map(p => ({
+                id: p.id, x: p.x, y: p.y, vx: p.vx, vy: p.vy, radius: p.radius, team: p.team, nickname: p.nickname, flag: p.flag, number: p.number, inputs: p.inputs
+            })),
             score: room.score,
             tournament: room.mode === 'tournament' ? room.tournament : null,
             eventMsg: room.eventMsg || ''

@@ -35,6 +35,7 @@ function drawPreview() {
     pCtx.textAlign = 'center';
     pCtx.textBaseline = 'middle';
     const flag = document.getElementById('input-flag').value;
+    pCtx.fillStyle = 'white';
     pCtx.fillText(flag, 40, 30); // Draw slightly above center
 
     // Draw Number
@@ -73,8 +74,13 @@ document.getElementById('btn-submit-nickname').onclick = () => {
 
 document.getElementById('input-room-mode').addEventListener('change', (e) => {
     const isTourney = e.target.value === 'tournament';
-    if (isTourney) document.getElementById('tourney-teams-group').classList.remove('hidden');
-    else document.getElementById('tourney-teams-group').classList.add('hidden');
+    if (isTourney) {
+        document.getElementById('tourney-teams-group').classList.remove('hidden');
+        document.getElementById('max-players-group').classList.add('hidden');
+    } else {
+        document.getElementById('tourney-teams-group').classList.add('hidden');
+        document.getElementById('max-players-group').classList.remove('hidden');
+    }
 });
 
 document.getElementById('btn-refresh-rooms').onclick = loadRooms;
@@ -283,10 +289,12 @@ function resizeCanvas() {
 }
 window.addEventListener('resize', resizeCanvas);
 
-let gameState = null;
+let lastStateTime = Date.now();
 socket.on('gameState', state => {
     if (gameStatus !== 'PLAYING') return;
-
+    
+    lastStateTime = Date.now();
+    gameState = state;
     // Show event overlay if present
     const overlay = document.getElementById('game-event-overlay');
     if (state.eventMsg) {
@@ -317,35 +325,27 @@ socket.on('gameState', state => {
 
 // Render Loop
 function render() {
-    if (gameStatus !== 'PLAYING' || !currentRoomId || !gameState) {
+    if (!gameState) {
         requestAnimationFrame(render);
         return;
     }
     
-    // Draw Field
-    ctx.fillStyle = '#22c55e'; // base green
-    ctx.fillRect(0, 0, FIELD_W, FIELD_H);
+    // Extrapolate logic Delta calculation
+    const now = Date.now();
+    let dt = (now - lastStateTime) / (1000 / 60); // 1.0 dt = 1 tick elapsed
+    if (dt > 3) dt = 3; // Clamp huge lag spikes
+
+    ctx.clearRect(0, 0, FIELD_W, FIELD_H);
     
-    // Stripes
+    // Draw Field Map
     ctx.fillStyle = '#4ade80';
-    for (let i = 0; i < FIELD_W; i += 100) {
-        ctx.fillRect(i, 0, 50, FIELD_H);
-    }
-    
-    // Lines
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
-    ctx.lineWidth = 5;
-    ctx.beginPath();
-    ctx.moveTo(FIELD_W/2, 0); ctx.lineTo(FIELD_W/2, FIELD_H); // Center line
-    ctx.stroke();
-    
-    ctx.beginPath();
-    ctx.arc(FIELD_W/2, FIELD_H/2, 80, 0, Math.PI * 2); // Center circle
-    ctx.stroke();
-    
-    // Penalty areas
-    ctx.strokeRect(-5, 150, 150, 300); // left penalty
-    ctx.strokeRect(FIELD_W - 145, 150, 150, 300); // right penalty
+    ctx.fillRect(0, 0, FIELD_W, FIELD_H);
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(FIELD_W/2, 0); ctx.lineTo(FIELD_W/2, FIELD_H); ctx.stroke();
+    ctx.beginPath(); ctx.arc(FIELD_W/2, FIELD_H/2, 50, 0, Math.PI*2); ctx.stroke();
+    ctx.strokeRect(0, FIELD_H/4, 100, FIELD_H/2);
+    ctx.strokeRect(FIELD_W-100, FIELD_H/4, 100, FIELD_H/2);
     
     // Goals - Using black/white checker or simple contrast
     ctx.fillStyle = 'rgba(0,0,0,0.6)';
@@ -361,47 +361,54 @@ function render() {
 
     // Draw Players
     gameState.players.forEach(p => {
+        // Interpolate Positions visually bridging the 60hz limit constraints
+        let ex = p.x + ((p.inputs ? (p.vx || 0) : 0) * dt);
+        let ey = p.y + ((p.inputs ? (p.vy || 0) : 0) * dt);
+        ex = Math.max(p.radius, Math.min(FIELD_W - p.radius, ex));
+        ey = Math.max(p.radius, Math.min(FIELD_H - p.radius, ey));
+
         // Player body
         ctx.beginPath();
-        ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+        ctx.arc(ex, ey, p.radius, 0, Math.PI * 2);
         ctx.fillStyle = p.team === 'red' ? '#ef4444' : '#3b82f6';
         ctx.fill();
         
         ctx.beginPath();
-        ctx.arc(p.x, p.y, p.radius - 3, 0, Math.PI * 2);
+        ctx.arc(ex, ey, p.radius - 3, 0, Math.PI * 2);
         ctx.strokeStyle = p.team === 'red' ? '#991b1b' : '#1e40af';
         ctx.lineWidth = 2;
         ctx.stroke();
 
         ctx.beginPath();
-        ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+        ctx.arc(ex, ey, p.radius, 0, Math.PI * 2);
         ctx.lineWidth = 3;
         ctx.strokeStyle = '#000';
         ctx.stroke();
         
-        // Draw Flag Emoji
+        // Draw Flag Emoji (Fallbacks will use correct white context if missing OS emoji fonts)
+        ctx.fillStyle = 'white';
         ctx.font = '22px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", "Twemoji Mozilla"';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText(p.flag || '🏳️', p.x, p.y - 4);
+        ctx.fillText(p.flag || '🏳️', ex, ey - 4);
 
         // Print jersey number below flag inside circle
         ctx.fillStyle = 'white';
         ctx.strokeStyle = 'black';
         ctx.lineWidth = 2;
         ctx.font = 'bold 12px Inter';
-        ctx.strokeText(p.number || '', p.x, p.y + 8);
-        ctx.fillText(p.number || '', p.x, p.y + 8);
+        ctx.strokeText(p.number || '', ex, ey + 8);
+        ctx.fillText(p.number || '', ex, ey + 8);
 
         // Nickname below the player
         ctx.font = 'bold 12px Inter';
-        ctx.strokeText(p.nickname, p.x, p.y + 25);
-        ctx.fillText(p.nickname, p.x, p.y + 25);
+        ctx.strokeText(p.nickname, ex, ey + 25);
+        ctx.fillText(p.nickname, ex, ey + 25);
         
         // Draw kick indicator if pressing kick
         if (p.inputs && p.inputs.kick) {
             ctx.beginPath();
-            ctx.arc(p.x, p.y, p.radius + 4, 0, Math.PI * 2);
+            ctx.arc(ex, ey, p.radius + 4, 0, Math.PI * 2);
             ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
             ctx.lineWidth = 3;
             ctx.stroke();
@@ -410,8 +417,13 @@ function render() {
     
     // Draw Ball
     const b = gameState.ball;
+    let bx = b.x + (b.vx || 0) * dt;
+    let by = b.y + (b.vy || 0) * dt;
+    bx = Math.max(b.radius, Math.min(FIELD_W - b.radius, bx));
+    by = Math.max(b.radius, Math.min(FIELD_H - b.radius, by));
+
     ctx.beginPath();
-    ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2);
+    ctx.arc(bx, by, b.radius, 0, Math.PI * 2);
     ctx.fillStyle = '#fff';
     ctx.fill();
     ctx.lineWidth = 2;
@@ -420,7 +432,7 @@ function render() {
     
     // Ball simple pattern
     ctx.beginPath();
-    ctx.arc(b.x, b.y, b.radius/2, 0, Math.PI * 2);
+    ctx.arc(bx, by, b.radius/2, 0, Math.PI * 2);
     ctx.fillStyle = '#111';
     ctx.fill();
     

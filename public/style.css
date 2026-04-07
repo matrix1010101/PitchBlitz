@@ -370,15 +370,54 @@ tr:hover td {
 .bracket-round {
     display: flex;
     flex-direction: column;
-    gap: 2rem;
+    justify-content: space-around;
+    min-height: 400px;
 }
 
 .match-box {
+    position: relative;
     background: rgba(15, 23, 42, 0.8);
     border: 1px solid var(--modal-border);
     border-radius: 8px;
     padding: 1rem;
     width: 250px;
+    margin: 1rem 0;
+}
+
+/* Left connection lines */
+.bracket-round:not(:first-child) .match-box::before {
+    content: '';
+    position: absolute;
+    left: -1.5rem;
+    top: 50%;
+    width: 1.5rem;
+    height: 2px;
+    background-color: var(--modal-border);
+}
+
+/* Right connection and vertical stems */
+.bracket-round:not(:last-child) .match-box:nth-child(odd)::after {
+    content: '';
+    position: absolute;
+    right: -1.5rem;
+    top: 50%;
+    width: 1.5rem;
+    height: calc(100% + 1rem); /* Extend down halfway */
+    border-top: 2px solid var(--modal-border);
+    border-right: 2px solid var(--modal-border);
+    border-top-right-radius: 4px;
+}
+
+.bracket-round:not(:last-child) .match-box:nth-child(even)::after {
+    content: '';
+    position: absolute;
+    right: -1.5rem;
+    bottom: 50%;
+    width: 1.5rem;
+    height: calc(100% + 1rem); /* Extend up halfway */
+    border-bottom: 2px solid var(--modal-border);
+    border-right: 2px solid var(--modal-border);
+    border-bottom-right-radius: 4px;
 }
 
 .match-box.active {
