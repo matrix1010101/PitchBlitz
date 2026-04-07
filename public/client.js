@@ -79,14 +79,14 @@ document.getElementById('btn-play-now').onclick = () => showModal(nicknameModal)
 
 document.getElementById('btn-submit-nickname').onclick = () => {
     const val = document.getElementById('input-nickname').value.toUpperCase();
-    if (val.length >= 1 && val.length <= 5) {
+    if (val.length >= 1 && val.length <= 20) {
         myNickname = val;
         myFlag = document.getElementById('input-flag').value;
         myNumber = document.getElementById('input-number').value || 10;
         loadRooms();
         showModal(roomListModal);
     } else {
-        alert("Must be 1-5 letters.");
+        alert("Must be 1-20 letters.");
     }
 };
 
@@ -95,9 +95,6 @@ document.getElementById('input-room-mode').addEventListener('change', (e) => {
     if (isTourney) {
         document.getElementById('tourney-teams-group').classList.remove('hidden');
         document.getElementById('max-players-group').classList.add('hidden');
-        // Auto-set max players from current team count
-        const teamCount = parseInt(document.getElementById('input-tourney-teams').value) || 4;
-        document.getElementById('input-room-max').value = teamCount * 2;
     } else {
         document.getElementById('tourney-teams-group').classList.add('hidden');
         document.getElementById('max-players-group').classList.remove('hidden');
@@ -105,9 +102,8 @@ document.getElementById('input-room-mode').addEventListener('change', (e) => {
 });
 
 document.getElementById('input-tourney-teams').addEventListener('change', (e) => {
-    // Auto-update max players when team count changes
-    const teamCount = parseInt(e.target.value);
-    document.getElementById('input-room-max').value = teamCount * 2;
+    // Keep max value in sync for server but hidden from user
+    document.getElementById('input-room-max').value = parseInt(e.target.value) * 2;
 });
 
 document.getElementById('btn-refresh-rooms').onclick = loadRooms;
@@ -117,9 +113,10 @@ document.getElementById('btn-cancel-create').onclick = () => showModal(roomListM
 document.getElementById('btn-create-room').onclick = () => {
     const name = document.getElementById('input-room-name').value;
     const pwd = document.getElementById('input-room-password').value;
-    const max = parseInt(document.getElementById('input-room-max').value);
     const mode = document.getElementById('input-room-mode').value;
-    const tourneyTeams = parseInt(document.getElementById('input-tourney-teams').value);
+    const isTourney = mode === 'tournament';
+    const tourneyTeams = parseInt(document.getElementById('input-tourney-teams').value) || 4;
+    const max = isTourney ? tourneyTeams * 2 : parseInt(document.getElementById('input-room-max').value);
     if (!name) return alert("Room name required");
     
     socket.emit('createRoom', { name, password: pwd, maxPlayers: max, mode, tourneyTeams, nickname: myNickname, flag: myFlag, number: myNumber }, (res) => {
@@ -350,8 +347,10 @@ function leaveCurrentRoom() {
 // --- Game/Canvas Logic ---
 const canvas = document.getElementById('game-canvas');
 const ctx = canvas.getContext('2d');
-const FIELD_W = 1200;
-const FIELD_H = 600;
+let FIELD_W = 1200; // Dynamic: updated from server on first gameState
+let FIELD_H = 600;
+let GOAL_T = 200;
+let GOAL_B = 400;
 
 function resizeCanvas() {
     const ratio = FIELD_W / FIELD_H;
@@ -377,6 +376,14 @@ socket.on('gameState', state => {
     if (gameStatus !== 'PLAYING') return;
     
     lastStateTime = Date.now();
+    // Update dynamic field dimensions from server
+    if (state.fieldWidth) {
+        FIELD_W = state.fieldWidth;
+        FIELD_H = state.fieldHeight;
+        GOAL_T = state.goalTop;
+        GOAL_B = state.goalBottom;
+        resizeCanvas();
+    }
     gameState = state;
     // Show event overlay if present
     const overlay = document.getElementById('game-event-overlay');
@@ -413,34 +420,41 @@ function render() {
         return;
     }
     
-    // Extrapolate logic Delta calculation
+    // Extrapolate with tighter clamp optimized for 128Hz packets
     const now = Date.now();
-    let dt = (now - lastStateTime) / (1000 / 60); // 1.0 dt = 1 tick elapsed
-    if (dt > 3) dt = 3; // Clamp huge lag spikes
+    let dt = (now - lastStateTime) / (1000 / 128); // 1.0 = 1 server tick (128hz)
+    if (dt > 2) dt = 2; // Short clamp: packets arrive frequently at 128Hz
 
     ctx.clearRect(0, 0, FIELD_W, FIELD_H);
     
     // Draw Field Map
     ctx.fillStyle = '#4ade80';
     ctx.fillRect(0, 0, FIELD_W, FIELD_H);
-    ctx.strokeStyle = '#fff';
+    ctx.strokeStyle = '#22c55e';
+    ctx.lineWidth = 40;
+    // Alternating stripe stripes
+    for (let x = 0; x < FIELD_W; x += 120) {
+        ctx.fillStyle = x % 240 === 0 ? '#4ade80' : '#3dd56a';
+        ctx.fillRect(x, 0, 120, FIELD_H);
+    }
+    ctx.strokeStyle = 'rgba(255,255,255,0.7)';
     ctx.lineWidth = 3;
     ctx.beginPath(); ctx.moveTo(FIELD_W/2, 0); ctx.lineTo(FIELD_W/2, FIELD_H); ctx.stroke();
-    ctx.beginPath(); ctx.arc(FIELD_W/2, FIELD_H/2, 50, 0, Math.PI*2); ctx.stroke();
-    ctx.strokeRect(0, FIELD_H/4, 100, FIELD_H/2);
-    ctx.strokeRect(FIELD_W-100, FIELD_H/4, 100, FIELD_H/2);
+    ctx.beginPath(); ctx.arc(FIELD_W/2, FIELD_H/2, Math.min(FIELD_H * 0.1, 60), 0, Math.PI*2); ctx.stroke();
+    ctx.strokeRect(0, FIELD_H/4, FIELD_W * 0.08, FIELD_H/2);
+    ctx.strokeRect(FIELD_W - FIELD_W * 0.08, FIELD_H/4, FIELD_W * 0.08, FIELD_H/2);
     
-    // Goals - Using black/white checker or simple contrast
-    ctx.fillStyle = 'rgba(0,0,0,0.6)';
-    ctx.fillRect(0, 200, 20, 200);   // Red Goal Net inside
-    ctx.fillRect(FIELD_W - 20, 200, 20, 200); // Blue Goal Net inside
+    // Goals
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fillRect(0, GOAL_T, 20, GOAL_B - GOAL_T);
+    ctx.fillRect(FIELD_W - 20, GOAL_T, 20, GOAL_B - GOAL_T);
     
     // Goal posts
     ctx.fillStyle = '#fff';
-    ctx.beginPath(); ctx.arc(0, 200, 8, 0, Math.PI*2); ctx.fill(); // Top left
-    ctx.beginPath(); ctx.arc(0, 400, 8, 0, Math.PI*2); ctx.fill(); // Bot left
-    ctx.beginPath(); ctx.arc(FIELD_W, 200, 8, 0, Math.PI*2); ctx.fill(); // Top right
-    ctx.beginPath(); ctx.arc(FIELD_W, 400, 8, 0, Math.PI*2); ctx.fill(); // Bot right
+    ctx.beginPath(); ctx.arc(0, GOAL_T, 8, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(0, GOAL_B, 8, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(FIELD_W, GOAL_T, 8, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(FIELD_W, GOAL_B, 8, 0, Math.PI*2); ctx.fill();
 
     // Draw Players
     gameState.players.forEach(p => {

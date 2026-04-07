@@ -13,13 +13,23 @@ app.use(express.static(__dirname)); // Fallback if files are uploaded directly t
 const PORT = process.env.PORT || 3000;
 
 // Game Config
-const TICK_RATE = 60;
-const FIELD_WIDTH = 1200;
-const FIELD_HEIGHT = 600;
+const TICK_RATE = 128; // Higher = smoother physics & less lag
+const FIELD_WIDTH = 1200;  // Default, overridden per room
+const FIELD_HEIGHT = 600;  // Default, overridden per room
 const GOAL_TOP = 200;
 const GOAL_BOTTOM = 400;
 const BALL_FRICTION = 0.99;
 const PLAYER_FRICTION = 0.92;
+
+function getFieldSize(maxPlayers) {
+    // Scale field dynamically with player count
+    if (maxPlayers <= 2)  return { w: 800,  h: 500,  gTop: 167, gBot: 333 };
+    if (maxPlayers <= 4)  return { w: 1000, h: 550,  gTop: 183, gBot: 367 };
+    if (maxPlayers <= 6)  return { w: 1200, h: 600,  gTop: 200, gBot: 400 };
+    if (maxPlayers <= 8)  return { w: 1400, h: 650,  gTop: 217, gBot: 433 };
+    if (maxPlayers <= 10) return { w: 1600, h: 700,  gTop: 233, gBot: 467 };
+    return                       { w: 1900, h: 800,  gTop: 267, gBot: 533 };
+}
 
 const ROOMS = new Map();
 
@@ -40,6 +50,7 @@ io.on('connection', socket => {
 
     socket.on('createRoom', (data, cb) => {
         const id = generateId();
+        const field = getFieldSize(data.maxPlayers);
         const room = {
             id, name: data.name, password: data.password || '', maxPlayers: data.maxPlayers,
             mode: data.mode || 'single',
@@ -47,7 +58,10 @@ io.on('connection', socket => {
             status: 'LOBBY',
             adminId: socket.id,
             players: new Map(),
-            ball: { x: FIELD_WIDTH/2, y: FIELD_HEIGHT/2, vx: 0, vy: 0, radius: 10, mass: 1 },
+            // Dynamic field based on player capacity
+            fieldWidth: field.w, fieldHeight: field.h,
+            goalTop: field.gTop, goalBottom: field.gBot,
+            ball: { x: field.w/2, y: field.h/2, vx: 0, vy: 0, radius: 10, mass: 1 },
             score: { red: 0, blue: 0 },
             timeRemaining: 0,
             timeLimit: 3,
@@ -257,6 +271,10 @@ setInterval(() => {
         const state = {
             timeRemaining: room.timeRemaining,
             ball: room.ball,
+            fieldWidth: room.fieldWidth,
+            fieldHeight: room.fieldHeight,
+            goalTop: room.goalTop,
+            goalBottom: room.goalBottom,
             players: Array.from(room.players.values()).filter(p => ['red','blue'].includes(p.team)).map(p => ({
                 id: p.id, x: p.x, y: p.y, vx: p.vx, vy: p.vy, radius: p.radius, team: p.team, nickname: p.nickname, flag: p.flag, number: p.number, inputs: p.inputs
             })),
@@ -422,6 +440,9 @@ function getBracketData(room) {
 // ----- End Bracket Logic -----
 
 function updatePhysics(room) {
+    const FW = room.fieldWidth, FH = room.fieldHeight;
+    const GT = room.goalTop, GB = room.goalBottom;
+
     if (room.goalPause && room.goalPause > 0) {
         room.goalPause--;
         if (room.goalPause <= 0) {
@@ -438,7 +459,7 @@ function updatePhysics(room) {
         player.vx *= PLAYER_FRICTION;
         player.vy *= PLAYER_FRICTION;
         
-        const acc = 0.25; // Slower Acceleration amount
+        const acc = 0.18; // Tuned for 128Hz
         if (player.inputs.up) player.vy -= acc;
         if (player.inputs.down) player.vy += acc;
         if (player.inputs.left) player.vx -= acc;
@@ -447,9 +468,9 @@ function updatePhysics(room) {
         player.x += player.vx;
         player.y += player.vy;
         
-        // Field constraints
-        player.x = Math.max(player.radius, Math.min(FIELD_WIDTH - player.radius, player.x));
-        player.y = Math.max(player.radius, Math.min(FIELD_HEIGHT - player.radius, player.y));
+        // Field constraints - use room's actual field dimensions
+        player.x = Math.max(player.radius, Math.min(FW - player.radius, player.x));
+        player.y = Math.max(player.radius, Math.min(FH - player.radius, player.y));
     }
     
     // ball physics
@@ -483,24 +504,24 @@ function updatePhysics(room) {
     
     // Ball wall collisions (Top and Bottom)
     if (room.ball.y < room.ball.radius) { room.ball.y = room.ball.radius; room.ball.vy *= -1; }
-    if (room.ball.y > FIELD_HEIGHT - room.ball.radius) { room.ball.y = FIELD_HEIGHT - room.ball.radius; room.ball.vy *= -1; }
+    if (room.ball.y > FH - room.ball.radius) { room.ball.y = FH - room.ball.radius; room.ball.vy *= -1; }
     
     // Goal mechanics & Side constraints
     if (room.ball.x < room.ball.radius) {
-        if (room.ball.y > GOAL_TOP && room.ball.y < GOAL_BOTTOM) {
+        if (room.ball.y > GT && room.ball.y < GB) {
             room.score.blue++;
-            room.eventMsg = "GOAL BLUE!";
-            room.goalPause = 180;
+            room.eventMsg = "GOAL BLUE! 🔵";
+            room.goalPause = TICK_RATE * 3; // Always exactly 3 seconds regardless of tick rate
         } else {
             room.ball.x = room.ball.radius;
             room.ball.vx *= -1;
         }
     }
-    if (room.ball.x > FIELD_WIDTH - room.ball.radius) {
-        if (room.ball.y > GOAL_TOP && room.ball.y < GOAL_BOTTOM) {
+    if (room.ball.x > FW - room.ball.radius) {
+        if (room.ball.y > GT && room.ball.y < GB) {
             room.score.red++;
-            room.eventMsg = "GOAL RED!";
-            room.goalPause = 180;
+            room.eventMsg = "GOAL RED! 🔴";
+            room.goalPause = TICK_RATE * 3;
         } else {
             room.ball.x = FIELD_WIDTH - room.ball.radius;
             room.ball.vx *= -1;
