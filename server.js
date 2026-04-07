@@ -42,7 +42,8 @@ io.on('connection', socket => {
         const id = generateId();
         const room = {
             id, name: data.name, password: data.password || '', maxPlayers: data.maxPlayers,
-            mode: data.mode || 'single', // 'single' or 'tournament'
+            mode: data.mode || 'single',
+            tourneyTeams: data.tourneyTeams || 4,
             status: 'LOBBY',
             adminId: socket.id,
             players: new Map(),
@@ -52,15 +53,11 @@ io.on('connection', socket => {
             timeLimit: 3,
             scoreLimit: 3,
             ticksPassed: 0,
-            tournament: {
-                leg: 1,
-                aggRed: 0,
-                aggBlue: 0
-            }
+            tournament: { leg: 1, aggRed: 0, aggBlue: 0 }
         };
         ROOMS.set(id, room);
         
-        joinRoom(socket, id, data.nickname, data.color, data.number);
+        joinRoom(socket, id, data.nickname, data.flag, data.number);
         currentRoom = id;
         cb({ success: true, roomId: id });
     });
@@ -71,7 +68,7 @@ io.on('connection', socket => {
         if (room.players.size >= room.maxPlayers) return cb({ success: false, error: 'Room full' });
         if (room.password && room.password !== data.password) return cb({ success: false, error: 'Wrong password' });
         
-        joinRoom(socket, data.roomId, data.nickname, data.color, data.number);
+        joinRoom(socket, data.roomId, data.nickname, data.flag, data.number);
         currentRoom = data.roomId;
         cb({ success: true });
     });
@@ -86,7 +83,8 @@ io.on('connection', socket => {
         if (!room || room.adminId !== socket.id || room.status !== 'LOBBY') return;
         
         const p = room.players.get(data.playerId);
-        if (p && ['red', 'blue', 'spec'].includes(data.team)) {
+        const validTeams = ['red', 'blue', 'spec', ...Array.from({length: room.tourneyTeams || 4}, (_, i) => `t${i+1}`)];
+        if (p && validTeams.includes(data.team)) {
             p.team = data.team;
             broadcastLobbyUpdate(room);
         }
@@ -204,6 +202,8 @@ function broadcastLobbyUpdate(room) {
     if (room.status === 'LOBBY') {
         io.to(room.id).emit('lobbyUpdate', {
             adminId: room.adminId,
+            mode: room.mode,
+            tourneyTeams: room.tourneyTeams,
             players: Array.from(room.players.values()).map(p => ({
                 id: p.id,
                 nickname: p.nickname,

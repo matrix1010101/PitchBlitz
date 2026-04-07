@@ -17,6 +17,18 @@ let currentRoomId = null;
 let isRoomAdmin = false;
 let gameStatus = 'LOBBY'; // LOBBY, BRACKET, PLAYING
 
+// --- Flag Image Cache ---
+const flagImageCache = {};
+function getFlagImage(code) {
+    if (flagImageCache[code]) return flagImageCache[code];
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.src = `https://flagcdn.com/w40/${code}.png`;
+    img.onload = () => { flagImageCache[code] = img; drawPreview(); };
+    flagImageCache[code] = img;
+    return img;
+}
+
 // --- Profile Preview ---
 const previewCanvas = document.getElementById('preview-canvas');
 const pCtx = previewCanvas.getContext('2d');
@@ -24,28 +36,34 @@ function drawPreview() {
     pCtx.clearRect(0,0,80,80);
     pCtx.beginPath();
     pCtx.arc(40, 40, 30, 0, Math.PI * 2);
-    pCtx.fillStyle = '#1e293b'; // Base neutral circle
+    pCtx.fillStyle = '#1e293b';
     pCtx.fill();
     pCtx.lineWidth = 3;
     pCtx.strokeStyle = '#000';
     pCtx.stroke();
     
-    // Draw Flag
-    pCtx.font = '28px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", "Twemoji Mozilla"';
-    pCtx.textAlign = 'center';
-    pCtx.textBaseline = 'middle';
-    const flag = document.getElementById('input-flag').value;
-    pCtx.fillStyle = 'white';
-    pCtx.fillText(flag, 40, 30); // Draw slightly above center
+    // Draw Flag Image
+    const code = document.getElementById('input-flag').value;
+    const flagImg = getFlagImage(code);
+    if (flagImg.complete && flagImg.naturalWidth > 0) {
+        pCtx.save();
+        pCtx.beginPath();
+        pCtx.arc(40, 33, 14, 0, Math.PI * 2);
+        pCtx.clip();
+        pCtx.drawImage(flagImg, 26, 19, 28, 28);
+        pCtx.restore();
+    }
 
     // Draw Number
     pCtx.fillStyle = 'white';
     pCtx.strokeStyle = 'black';
     pCtx.lineWidth = 3;
     pCtx.font = 'bold 16px Inter';
+    pCtx.textAlign = 'center';
+    pCtx.textBaseline = 'middle';
     const num = document.getElementById('input-number').value || '?';
-    pCtx.strokeText(num, 40, 52);
-    pCtx.fillText(num, 40, 52);
+    pCtx.strokeText(num, 40, 55);
+    pCtx.fillText(num, 40, 55);
 }
 document.getElementById('input-flag').addEventListener('change', drawPreview);
 document.getElementById('input-number').addEventListener('input', drawPreview);
@@ -77,10 +95,19 @@ document.getElementById('input-room-mode').addEventListener('change', (e) => {
     if (isTourney) {
         document.getElementById('tourney-teams-group').classList.remove('hidden');
         document.getElementById('max-players-group').classList.add('hidden');
+        // Auto-set max players from current team count
+        const teamCount = parseInt(document.getElementById('input-tourney-teams').value) || 4;
+        document.getElementById('input-room-max').value = teamCount * 2;
     } else {
         document.getElementById('tourney-teams-group').classList.add('hidden');
         document.getElementById('max-players-group').classList.remove('hidden');
     }
+});
+
+document.getElementById('input-tourney-teams').addEventListener('change', (e) => {
+    // Auto-update max players when team count changes
+    const teamCount = parseInt(e.target.value);
+    document.getElementById('input-room-max').value = teamCount * 2;
 });
 
 document.getElementById('btn-refresh-rooms').onclick = loadRooms;
@@ -163,20 +190,75 @@ socket.on('lobbyUpdate', data => {
         adminPanel.classList.add('hidden');
     }
 
-    const mapPlayers = list => list.map(p => `
-        <li>
-            <span><b>${p.number}</b> ${p.nickname} ${p.flag} ${p.id === data.adminId ? '👑' : ''}</span>
-            ${isRoomAdmin ? `<div class="player-controls">
-                <button class="btn tiny ghost" onclick="adminMove('${p.id}', 'red')">R</button>
-                <button class="btn tiny ghost" onclick="adminMove('${p.id}', 'spec')">S</button>
-                <button class="btn tiny ghost" onclick="adminMove('${p.id}', 'blue')">B</button>
-            </div>` : ''}
-        </li>
-    `).join('');
-    
-    document.getElementById('lobby-red-list').innerHTML = mapPlayers(data.players.filter(p => p.team === 'red'));
-    document.getElementById('lobby-blue-list').innerHTML = mapPlayers(data.players.filter(p => p.team === 'blue'));
-    document.getElementById('lobby-spec-list').innerHTML = mapPlayers(data.players.filter(p => p.team === 'spec'));
+    const flagImg = code => `<img src="https://flagcdn.com/w20/${code || 'un'}.png" style="width:18px;height:12px;border-radius:2px;vertical-align:middle;margin-right:4px;">`;
+    const container = document.getElementById('lobby-container');
+
+    if (data.mode === 'tournament') {
+        // ---- TOURNAMENT DRAW VIEW ----
+        const numTeams = data.tourneyTeams || 4;
+        const teamMap = {};
+        for (let i = 1; i <= numTeams; i++) teamMap[i] = [];
+        data.players.filter(p => p.team !== 'spec' && p.team.startsWith('t')).forEach(p => {
+            const idx = parseInt(p.team.replace('t', ''));
+            if (teamMap[idx]) teamMap[idx].push(p);
+        });
+        const waitingPool = data.players.filter(p => p.team === 'spec');
+
+        let html = `<div class="draw-layout">
+            <div class="draw-waiting">
+                <div class="draw-waiting-title">Waiting Pool</div>
+                ${waitingPool.map(p => `
+                    <div class="draw-player">
+                        ${flagImg(p.flag)}<b>${p.nickname}</b> #${p.number} ${p.id === data.adminId ? '👑' : ''}
+                        ${isRoomAdmin ? `<div class="player-controls" style="margin-top:4px">
+                            ${Array.from({length: numTeams}, (_, i) => `<button class="btn tiny ghost" onclick="adminMove('${p.id}','t${i+1}')">→T${i+1}</button>`).join('')}
+                        </div>` : ''}
+                    </div>
+                `).join('')}
+            </div>
+            <div class="draw-teams">`;
+
+        for (let i = 1; i <= numTeams; i++) {
+            html += `<div class="draw-team-slot">
+                <div class="draw-team-label">Team ${i}</div>
+                ${teamMap[i].map(p => `
+                    <div class="draw-player assigned">
+                        ${flagImg(p.flag)}<b>${p.nickname}</b> #${p.number}
+                        ${isRoomAdmin ? `<button class="btn tiny ghost" onclick="adminMove('${p.id}','spec')" style="margin-left:4px">✕</button>` : ''}
+                    </div>
+                `).join('')}
+                ${teamMap[i].length < 2 ? `<div class="draw-player empty">+ ${2 - teamMap[i].length} player(s) needed</div>` : ''}
+            </div>`;
+        }
+        html += `</div></div>`;
+        container.innerHTML = html;
+    } else {
+        // ---- SINGLE MATCH 3-COLUMN VIEW ----
+        const mapPlayers = list => list.map(p => `
+            <li>
+                <span>${flagImg(p.flag)}<b>${p.number}</b> ${p.nickname} ${p.id === data.adminId ? '👑' : ''}</span>
+                ${isRoomAdmin ? `<div class="player-controls">
+                    <button class="btn tiny ghost" onclick="adminMove('${p.id}', 'red')">R</button>
+                    <button class="btn tiny ghost" onclick="adminMove('${p.id}', 'spec')">S</button>
+                    <button class="btn tiny ghost" onclick="adminMove('${p.id}', 'blue')">B</button>
+                </div>` : ''}
+            </li>
+        `).join('');
+        
+        container.innerHTML = `
+            <div class="team-column red-col">
+                <div class="team-header red-header">Red</div>
+                <ul class="player-list">${mapPlayers(data.players.filter(p => p.team === 'red'))}</ul>
+            </div>
+            <div class="team-column spec-col">
+                <div class="team-header spec-header">Spectators</div>
+                <ul class="player-list">${mapPlayers(data.players.filter(p => p.team === 'spec'))}</ul>
+            </div>
+            <div class="team-column blue-col">
+                <div class="team-header blue-header">Blue</div>
+                <ul class="player-list">${mapPlayers(data.players.filter(p => p.team === 'blue'))}</ul>
+            </div>`;
+    }
 });
 
 // Admin global function
@@ -289,6 +371,7 @@ function resizeCanvas() {
 }
 window.addEventListener('resize', resizeCanvas);
 
+let gameState = null;
 let lastStateTime = Date.now();
 socket.on('gameState', state => {
     if (gameStatus !== 'PLAYING') return;
@@ -385,12 +468,16 @@ function render() {
         ctx.strokeStyle = '#000';
         ctx.stroke();
         
-        // Draw Flag Emoji (Fallbacks will use correct white context if missing OS emoji fonts)
-        ctx.fillStyle = 'white';
-        ctx.font = '22px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", "Twemoji Mozilla"';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(p.flag || '🏳️', ex, ey - 4);
+        // Draw Flag Image (circular clipped)
+        const flagImg = getFlagImage(p.flag || 'un');
+        if (flagImg.complete && flagImg.naturalWidth > 0) {
+            ctx.save();
+            ctx.beginPath();
+            ctx.arc(ex, ey - 4, 10, 0, Math.PI * 2);
+            ctx.clip();
+            ctx.drawImage(flagImg, ex - 10, ey - 14, 20, 20);
+            ctx.restore();
+        }
 
         // Print jersey number below flag inside circle
         ctx.fillStyle = 'white';

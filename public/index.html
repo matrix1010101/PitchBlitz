@@ -38,20 +38,37 @@
             <div class="input-group">
                 <label>Country Flag</label>
                 <select id="input-flag">
-                    <option value="🏳️">None (🏳️)</option>
-                    <option value="🇦🇷">Argentina (🇦🇷)</option>
-                    <option value="🇧🇷">Brazil (🇧🇷)</option>
-                    <option value="🇺🇸">USA (🇺🇸)</option>
-                    <option value="🇪🇸">Spain (🇪🇸)</option>
-                    <option value="🇫🇷">France (🇫🇷)</option>
-                    <option value="🇩🇪">Germany (🇩🇪)</option>
-                    <option value="🇮🇹">Italy (🇮🇹)</option>
-                    <option value="🏴󠁧󠁢󠁥󠁮󠁧󠁿">England (🏴󠁧󠁢󠁥󠁮󠁧󠁿)</option>
-                    <option value="🇺🇾">Uruguay (🇺🇾)</option>
-                    <option value="🇲🇽">Mexico (🇲🇽)</option>
-                    <option value="🇨🇴">Colombia (🇨🇴)</option>
-                    <option value="🇨🇱">Chile (🇨🇱)</option>
-                    <option value="🇵🇪">Peru (🇵🇪)</option>
+                    <option value="un">None (🌐)</option>
+                    <option value="ar">Argentina 🇦🇷</option>
+                    <option value="br">Brazil 🇧🇷</option>
+                    <option value="us">USA 🇺🇸</option>
+                    <option value="es">Spain 🇪🇸</option>
+                    <option value="fr">France 🇫🇷</option>
+                    <option value="de">Germany 🇩🇪</option>
+                    <option value="it">Italy 🇮🇹</option>
+                    <option value="gb-eng">England 🏴󠁧󠁢󠁥󠁮󠁧󠁿</option>
+                    <option value="uy">Uruguay 🇺🇾</option>
+                    <option value="mx">Mexico 🇲🇽</option>
+                    <option value="co">Colombia 🇨🇴</option>
+                    <option value="cl">Chile 🇨🇱</option>
+                    <option value="pe">Peru 🇵🇪</option>
+                    <option value="pt">Portugal 🇵🇹</option>
+                    <option value="nl">Netherlands 🇳🇱</option>
+                    <option value="be">Belgium 🇧🇪</option>
+                    <option value="hr">Croatia 🇭🇷</option>
+                    <option value="jp">Japan 🇯🇵</option>
+                    <option value="kr">South Korea 🇰🇷</option>
+                    <option value="ng">Nigeria 🇳🇬</option>
+                    <option value="ma">Morocco 🇲🇦</option>
+                    <option value="sn">Senegal 🇸🇳</option>
+                    <option value="gh">Ghana 🇬🇭</option>
+                    <option value="au">Australia 🇦🇺</option>
+                    <option value="tr">Turkey 🇹🇷</option>
+                    <option value="pl">Poland 🇵🇱</option>
+                    <option value="se">Sweden 🇸🇪</option>
+                    <option value="dk">Denmark 🇩🇰</option>
+                    <option value="rs">Serbia 🇷🇸</option>
+                    <option value="eg">Egypt 🇪🇬</option>
                 </select>
             </div>
             <button id="btn-submit-nickname" class="btn secondary">Continue</button>
@@ -122,19 +139,8 @@
                 <h2 id="lobby-room-name">Room Name</h2>
                 <button id="btn-lobby-leave" class="btn ghost small">Leave</button>
             </div>
-            <div class="lobby-container">
-                <div class="team-column red-col">
-                    <div class="team-header red-header">Red</div>
-                    <ul id="lobby-red-list" class="player-list"></ul>
-                </div>
-                <div class="team-column spec-col">
-                    <div class="team-header spec-header">Spectators</div>
-                    <ul id="lobby-spec-list" class="player-list"></ul>
-                </div>
-                <div class="team-column blue-col">
-                    <div class="team-header blue-header">Blue</div>
-                    <ul id="lobby-blue-list" class="player-list"></ul>
-                </div>
+            <div id="lobby-container" class="lobby-container">
+                <!-- Dynamic: rendered by JS based on mode -->
             </div>
             <div class="admin-controls hidden" id="admin-controls-panel">
                 <button id="btn-start-game" class="btn primary w-full">Start Game</button>

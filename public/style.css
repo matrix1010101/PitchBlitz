@@ -260,8 +260,86 @@ tr:hover td {
 .lobby-container {
     display: flex;
     gap: 1rem;
-    height: 350px;
+    min-height: 350px;
+    max-height: 450px;
+    overflow-y: auto;
 }
+
+/* Tournament Draw Layout */
+.draw-layout {
+    display: flex;
+    gap: 1rem;
+    width: 100%;
+}
+
+.draw-waiting {
+    flex: 0 0 200px;
+    background: rgba(0,0,0,0.2);
+    border-radius: 8px;
+    border: 1px solid var(--modal-border);
+    padding: 0.75rem;
+    overflow-y: auto;
+}
+
+.draw-waiting-title {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 0.5rem;
+    font-weight: 600;
+}
+
+.draw-teams {
+    flex: 1;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-content: flex-start;
+}
+
+.draw-team-slot {
+    flex: 0 0 calc(50% - 0.25rem);
+    background: rgba(59,130,246,0.08);
+    border: 1px dashed rgba(59,130,246,0.3);
+    border-radius: 8px;
+    padding: 0.5rem 0.75rem;
+    min-height: 80px;
+}
+
+.draw-team-label {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    color: var(--primary);
+    font-weight: 700;
+    margin-bottom: 0.4rem;
+    letter-spacing: 0.5px;
+}
+
+.draw-player {
+    background: rgba(255,255,255,0.05);
+    border-radius: 5px;
+    padding: 0.3rem 0.5rem;
+    margin-bottom: 0.3rem;
+    font-size: 0.85rem;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 2px;
+}
+
+.draw-player.assigned {
+    background: rgba(59,130,246,0.15);
+    border: 1px solid rgba(59,130,246,0.25);
+}
+
+.draw-player.empty {
+    color: var(--text-muted);
+    font-style: italic;
+    font-size: 0.8rem;
+    background: none;
+}
+
 
 .team-column {
     flex: 1;
