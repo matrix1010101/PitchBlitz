@@ -339,16 +339,20 @@ function checkMatchEnd(room) {
             }
         } else {
             // Single Match ended
-            const resultMsg = room.score.red > room.score.blue ? "RED Team Wins!" :
-                             room.score.blue > room.score.red ? "BLUE Team Wins!" : "Match ended in a DRAW!";
-            finishMatch(room, resultMsg);
+            const winner = room.score.red > room.score.blue ? 'red' :
+                           room.score.blue > room.score.red ? 'blue' : null;
+            const resultMsg = winner === 'red' ? 'RED Team Wins!' :
+                              winner === 'blue' ? 'BLUE Team Wins!' : 'Match ended in a DRAW!';
+            finishMatch(room, resultMsg, winner);
         }
     }
 }
 
-function finishMatch(room, msg) {
+function finishMatch(room, msg, winner = null) {
     room.status = 'LOBBY';
-    io.to(room.id).emit('gameEnded', { msg });
+    io.to(room.id).emit('gameEnded', { msg, winner });
+    // Reset all players to spec so lobby is clean
+    room.players.forEach(p => { p.team = 'spec'; });
     broadcastLobbyUpdate(room);
 }
 
@@ -496,8 +500,8 @@ function updatePhysics(room) {
             if (dist < activePlayers[i].radius + room.ball.radius + 10) { 
                 const nx = dx / dist;
                 const ny = dy / dist;
-                room.ball.vx += nx * 6;
-                room.ball.vy += ny * 6;
+                room.ball.vx += nx * 3;  // Reduced kick power (was 6)
+                room.ball.vy += ny * 3;
             }
         }
     }
@@ -510,8 +514,8 @@ function updatePhysics(room) {
     if (room.ball.x < room.ball.radius) {
         if (room.ball.y > GT && room.ball.y < GB) {
             room.score.blue++;
-            room.eventMsg = "GOAL BLUE! 🔵";
-            room.goalPause = TICK_RATE * 3; // Always exactly 3 seconds regardless of tick rate
+            room.goalPause = TICK_RATE * 3;
+            io.to(room.id).emit('goalScored', { team: 'blue', score: room.score });
         } else {
             room.ball.x = room.ball.radius;
             room.ball.vx *= -1;
@@ -520,10 +524,10 @@ function updatePhysics(room) {
     if (room.ball.x > FW - room.ball.radius) {
         if (room.ball.y > GT && room.ball.y < GB) {
             room.score.red++;
-            room.eventMsg = "GOAL RED! 🔴";
             room.goalPause = TICK_RATE * 3;
+            io.to(room.id).emit('goalScored', { team: 'red', score: room.score });
         } else {
-            room.ball.x = FIELD_WIDTH - room.ball.radius;
+            room.ball.x = FW - room.ball.radius;
             room.ball.vx *= -1;
         }
     }

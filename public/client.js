@@ -328,10 +328,27 @@ socket.on('gameStarted', (state) => {
 
 socket.on('gameEnded', (result) => {
     gameStatus = 'LOBBY';
-    gameLayer.classList.add('hidden');
-    uiLayer.style.display = 'flex';
-    showModal(roomLobbyModal);
-    if(result && result.msg) alert(result.msg);
+    // Show win celebration before going back to lobby
+    if (result && result.winner) {
+        const color = result.winner === 'red' ? '#ef4444' : '#3b82f6';
+        showCelebration(
+            result.winner === 'red' ? '🔴 RED WINS!' : '🔵 BLUE WINS!',
+            'Returning to lobby...',
+            color,
+            true
+        );
+        setTimeout(() => {
+            hideCelebration();
+            gameLayer.classList.add('hidden');
+            uiLayer.style.display = 'flex';
+            showModal(roomLobbyModal);
+        }, 4000);
+    } else {
+        gameLayer.classList.add('hidden');
+        uiLayer.style.display = 'flex';
+        showModal(roomLobbyModal);
+        if(result && result.msg) alert(result.msg);
+    }
 });
 
 function leaveCurrentRoom() {
@@ -344,7 +361,55 @@ function leaveCurrentRoom() {
     showModal(roomListModal);
 }
 
-// --- Game/Canvas Logic ---
+// --- Celebration System (Goals & Wins) ---
+const celebOverlay = document.getElementById('celebration-overlay');
+const celebTitle = document.getElementById('celebration-title');
+const celebSub = document.getElementById('celebration-sub');
+let confettiTimeout = null;
+
+function spawnConfetti(count = 80) {
+    const colors = ['#ef4444','#3b82f6','#fbbf24','#10b981','#f97316','#8b5cf6','#ec4899','#ffffff'];
+    for (let i = 0; i < count; i++) {
+        const el = document.createElement('div');
+        el.className = 'confetti-piece';
+        const side = Math.random() > 0.5;
+        el.style.left = (side ? Math.random() * 30 : 70 + Math.random() * 30) + 'vw';
+        el.style.top = '-20px';
+        el.style.background = colors[Math.floor(Math.random() * colors.length)];
+        el.style.width = (8 + Math.random() * 12) + 'px';
+        el.style.height = (8 + Math.random() * 12) + 'px';
+        el.style.animationDuration = (2 + Math.random() * 3) + 's';
+        el.style.animationDelay = (Math.random() * 0.8) + 's';
+        document.body.appendChild(el);
+        setTimeout(() => el.remove(), 5000);
+    }
+}
+
+function showCelebration(title, sub, bgColor, isWin = false) {
+    celebTitle.textContent = title;
+    celebSub.textContent = sub;
+    celebOverlay.style.background = bgColor
+        ? `radial-gradient(ellipse at center, ${bgColor}55 0%, rgba(0,0,0,0.7) 100%)`
+        : 'rgba(0,0,0,0.6)';
+    celebOverlay.classList.add('active');
+    spawnConfetti(isWin ? 150 : 80);
+}
+
+function hideCelebration() {
+    celebOverlay.classList.remove('active');
+}
+
+// Listen for goal events from server
+socket.on('goalScored', (data) => {
+    const color = data.team === 'red' ? '#ef4444' : '#3b82f6';
+    showCelebration(`⚽ GOAL! ${data.team.toUpperCase()}`, `Score: ${data.score.red} - ${data.score.blue}`, color);
+    setTimeout(hideCelebration, 2800);
+});
+
+// --- Prediction state for local player ---
+let localPredicted = { x: 0, y: 0, vx: 0, vy: 0, active: false };
+
+// Canvas setup (now after celebrationSystem is defined)
 const canvas = document.getElementById('game-canvas');
 const ctx = canvas.getContext('2d');
 let FIELD_W = 1200; // Dynamic: updated from server on first gameState
@@ -385,14 +450,28 @@ socket.on('gameState', state => {
         resizeCanvas();
     }
     gameState = state;
-    // Show event overlay if present
-    const overlay = document.getElementById('game-event-overlay');
-    if (state.eventMsg) {
-        document.getElementById('game-event-text').innerText = state.eventMsg;
-        overlay.classList.remove('hidden');
-    } else {
-        overlay.classList.add('hidden');
+
+    // Sync local prediction with authoritative server position
+    const me = state.players.find(p => p.id === socket.id);
+    if (me) {
+        // Snap if very far off (reconciliation)
+        const dx = me.x - localPredicted.x;
+        const dy = me.y - localPredicted.y;
+        const drift = Math.sqrt(dx*dx + dy*dy);
+        if (drift > 40) {
+            localPredicted.x = me.x;
+            localPredicted.y = me.y;
+        } else {
+            // Smooth blend toward server truth
+            localPredicted.x += dx * 0.35;
+            localPredicted.y += dy * 0.35;
+        }
+        localPredicted.vx = me.vx || 0;
+        localPredicted.vy = me.vy || 0;
+        localPredicted.active = true;
     }
+    // Show event overlay - use new celebration system instead of old overlay
+    // (goalScored socket event handles goal animations)
 
     document.getElementById('score-red').innerText = state.score.red;
     document.getElementById('score-blue').innerText = state.score.blue;
@@ -541,32 +620,36 @@ function render() {
 }
 requestAnimationFrame(render);
 
-// Input handling
+// Input handling with client-side prediction
 const inputs = { up: false, down: false, left: false, right: false, kick: false };
 
 function updateInputs() {
     if (currentRoomId) socket.emit('inputs', inputs);
 }
 
+const PRED_ACC = 0.18;
+const PRED_FRICTION = 0.92;
+
 window.addEventListener('keydown', e => {
-    if (!currentRoomId) return;
+    if (!currentRoomId || gameStatus !== 'PLAYING') return;
     let changed = false;
-    if (['w', 'ArrowUp'].includes(e.key.toLowerCase())) { inputs.up = true; changed = true; }
-    if (['s', 'ArrowDown'].includes(e.key.toLowerCase())) { inputs.down = true; changed = true; }
-    if (['a', 'ArrowLeft'].includes(e.key.toLowerCase())) { inputs.left = true; changed = true; }
-    if (['d', 'ArrowRight'].includes(e.key.toLowerCase())) { inputs.right = true; changed = true; }
+    if (['w', 'arrowup'].includes(e.key.toLowerCase())) { inputs.up = true; changed = true; }
+    if (['s', 'arrowdown'].includes(e.key.toLowerCase())) { inputs.down = true; changed = true; }
+    if (['a', 'arrowleft'].includes(e.key.toLowerCase())) { inputs.left = true; changed = true; }
+    if (['d', 'arrowright'].includes(e.key.toLowerCase())) { inputs.right = true; changed = true; }
     if (e.code === 'Space' && !inputs.kick) { inputs.kick = true; changed = true; }
     
+    e.preventDefault(); // Stop page scroll from arrow keys
     if (changed) updateInputs();
 });
 
 window.addEventListener('keyup', e => {
     if (!currentRoomId) return;
     let changed = false;
-    if (['w', 'ArrowUp'].includes(e.key.toLowerCase())) { inputs.up = false; changed = true; }
-    if (['s', 'ArrowDown'].includes(e.key.toLowerCase())) { inputs.down = false; changed = true; }
-    if (['a', 'ArrowLeft'].includes(e.key.toLowerCase())) { inputs.left = false; changed = true; }
-    if (['d', 'ArrowRight'].includes(e.key.toLowerCase())) { inputs.right = false; changed = true; }
+    if (['w', 'arrowup'].includes(e.key.toLowerCase())) { inputs.up = false; changed = true; }
+    if (['s', 'arrowdown'].includes(e.key.toLowerCase())) { inputs.down = false; changed = true; }
+    if (['a', 'arrowleft'].includes(e.key.toLowerCase())) { inputs.left = false; changed = true; }
+    if (['d', 'arrowright'].includes(e.key.toLowerCase())) { inputs.right = false; changed = true; }
     if (e.code === 'Space') { inputs.kick = false; changed = true; }
     
     if (changed) updateInputs();

@@ -22,6 +22,56 @@
     font-family: 'Inter', sans-serif;
 }
 
+/* CRITICAL: utility class used throughout JS for show/hide */
+.hidden {
+    display: none !important;
+}
+
+/* Celebration overlay (goal / win) */
+#celebration-overlay {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    z-index: 100;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.4s;
+}
+#celebration-overlay.active { opacity: 1; }
+#celebration-title {
+    font-size: 5rem;
+    font-weight: 900;
+    color: #fff;
+    text-shadow: 0 0 40px rgba(255,255,255,0.8), 0 4px 20px rgba(0,0,0,0.8);
+    animation: celebPulse 0.5s ease-in-out infinite alternate;
+}
+#celebration-sub {
+    font-size: 1.8rem;
+    color: rgba(255,255,255,0.8);
+    margin-top: 0.5rem;
+    text-shadow: 0 2px 10px rgba(0,0,0,0.5);
+}
+@keyframes celebPulse {
+    from { transform: scale(0.95); }
+    to { transform: scale(1.05); }
+}
+.confetti-piece {
+    position: fixed;
+    width: 10px;
+    height: 10px;
+    pointer-events: none;
+    animation: confettiFall linear forwards;
+    border-radius: 2px;
+    z-index: 99;
+}
+@keyframes confettiFall {
+    0%   { transform: translateY(-20px) rotateZ(0deg); opacity: 1; }
+    100% { transform: translateY(110vh) rotateZ(720deg); opacity: 0.2; }
+}
+
 body {
     background-color: var(--bg-dark);
     background-image: 
