@@ -263,6 +263,74 @@ window.adminMove = function(playerId, team) {
     socket.emit('adminMovePlayer', { playerId, team });
 }
 
+// Room List UI logic
+const btnOpenPractice = document.getElementById('btn-open-practice');
+const practiceRoomModal = document.getElementById('practice-room-modal');
+const btnStartPractice = document.getElementById('btn-start-practice');
+const btnCancelPractice = document.getElementById('btn-cancel-practice');
+const inputPracticeType = document.getElementById('input-practice-type');
+
+btnOpenPractice.onclick = () => showModal(practiceRoomModal);
+btnCancelPractice.onclick = () => hideModal(practiceRoomModal);
+
+btnStartPractice.onclick = () => {
+    const type = inputPracticeType.value;
+    socket.emit('createRoom', {
+        name: nickname + "'s Practice",
+        password: '',
+        maxPlayers: type === 'bots_3v3' ? 6 : (type === 'bots_2v2' ? 4 : 2),
+        mode: 'single',
+        isPractice: true,
+        practiceType: type,
+        nickname: nickname,
+        flag: flagInput.value,
+        number: numberInput.value
+    }, (res) => {
+        if (res.success) {
+            currentRoomId = res.roomId;
+            hideModal(practiceRoomModal);
+            hideModal(roomListModal);
+            uiLayer.style.display = 'none';
+        }
+    });
+};
+
+btnOpenCreateRoom.onclick = () => {
+    showModal(createRoomModal);
+};
+
+inputRoomMode.onchange = () => {
+    if (inputRoomMode.value === 'tournament') {
+        document.getElementById('tourney-teams-group').classList.remove('hidden');
+        document.getElementById('max-players-group').classList.add('hidden');
+    } else {
+        document.getElementById('tourney-teams-group').classList.add('hidden');
+        document.getElementById('max-players-group').classList.remove('hidden');
+    }
+};
+
+btnCreateRoom.onclick = () => {
+    const name = document.getElementById('input-room-name').value || (nickname + "'s Room");
+    const password = document.getElementById('input-room-password').value;
+    const mode = inputRoomMode.value;
+    const maxPlayers = parseInt(document.getElementById('input-room-max').value);
+    const tourneyTeams = parseInt(document.getElementById('input-tourney-teams').value);
+    
+    socket.emit('createRoom', { 
+        name, password, mode, maxPlayers, tourneyTeams,
+        nickname, flag: flagInput.value, number: numberInput.value 
+    }, (res) => {
+        if (res.success) {
+            currentRoomId = res.roomId;
+            hideModal(createRoomModal);
+            hideModal(roomListModal);
+            uiLayer.style.display = 'none';
+        } else {
+            alert(res.error);
+        }
+    });
+};
+
 document.getElementById('btn-start-game').onclick = () => {
     const timeLimit = parseInt(document.getElementById('input-time-limit').value) || 3;
     const scoreLimit = parseInt(document.getElementById('input-score-limit').value) || 3;
@@ -406,8 +474,9 @@ socket.on('goalScored', (data) => {
     setTimeout(hideCelebration, 2800);
 });
 
-// --- Prediction state for local player ---
+// --- Prediction state for local player(s) ---
 let localPredicted = { x: 0, y: 0, vx: 0, vy: 0, active: false };
+let localPredicted2 = { x: 0, y: 0, vx: 0, vy: 0, active: false }; // For local P2 in Same-PC mode
 
 // Canvas setup (now after celebrationSystem is defined)
 const canvas = document.getElementById('game-canvas');
@@ -469,6 +538,23 @@ socket.on('gameState', state => {
         localPredicted.vx = me.vx || 0;
         localPredicted.vy = me.vy || 0;
         localPredicted.active = true;
+    }
+
+    // Sync Local P2 prediction
+    const p2 = state.players.find(p => p.isLocalP2);
+    if (p2) {
+        const dx = p2.x - localPredicted2.x;
+        const dy = p2.y - localPredicted2.y;
+        if (Math.sqrt(dx*dx + dy*dy) > 40) {
+            localPredicted2.x = p2.x;
+            localPredicted2.y = p2.y;
+        } else {
+            localPredicted2.x += dx * 0.35;
+            localPredicted2.y += dy * 0.35;
+        }
+        localPredicted2.vx = p2.vx || 0;
+        localPredicted2.vy = p2.vy || 0;
+        localPredicted2.active = true;
     }
     // Show event overlay - use new celebration system instead of old overlay
     // (goalScored socket event handles goal animations)
@@ -537,11 +623,33 @@ function render() {
 
     // Draw Players
     gameState.players.forEach(p => {
-        // Interpolate Positions visually bridging the 60hz limit constraints
-        let ex = p.x + ((p.inputs ? (p.vx || 0) : 0) * dt);
-        let ey = p.y + ((p.inputs ? (p.vy || 0) : 0) * dt);
-        ex = Math.max(p.radius, Math.min(FIELD_W - p.radius, ex));
-        ey = Math.max(p.radius, Math.min(FIELD_H - p.radius, ey));
+        let ex, ey;
+        
+        // --- CLIENT SIDE PREDICTION (CSP) ---
+        let pred = null;
+        if (p.id === socket.id && localPredicted.active) pred = localPredicted;
+        else if (p.isLocalP2 && localPredicted2.active) pred = localPredicted2;
+
+        if (pred) {
+            // Predict small movements since last update
+            pred.vx *= PRED_FRICTION;
+            pred.vy *= PRED_FRICTION;
+            pred.x += pred.vx;
+            pred.y += pred.vy;
+            
+            // Field bounds
+            pred.x = Math.max(p.radius, Math.min(FIELD_W - p.radius, pred.x));
+            pred.y = Math.max(p.radius, Math.min(FIELD_H - p.radius, pred.y));
+            
+            ex = pred.x;
+            ey = pred.y;
+        } else {
+            // Interpolate / Extrapolate other players
+            ex = p.x + ((p.inputs ? (p.vx || 0) : 0) * dt);
+            ey = p.y + ((p.inputs ? (p.vy || 0) : 0) * dt);
+            ex = Math.max(p.radius, Math.min(FIELD_W - p.radius, ex));
+            ey = Math.max(p.radius, Math.min(FIELD_H - p.radius, ey));
+        }
 
         // Player body
         ctx.beginPath();
@@ -622,35 +730,78 @@ requestAnimationFrame(render);
 
 // Input handling with client-side prediction
 const inputs = { up: false, down: false, left: false, right: false, kick: false };
+const inputs2 = { up: false, down: false, left: false, right: false, kick: false }; // For same-pc mode
 
 function updateInputs() {
-    if (currentRoomId) socket.emit('inputs', inputs);
+    if (currentRoomId) {
+        socket.emit('inputs', { p1: inputs, p2: inputs2 });
+    }
 }
 
-const PRED_ACC = 0.18;
+const PRED_ACC = 0.35; 
 const PRED_FRICTION = 0.92;
 
 window.addEventListener('keydown', e => {
     if (!currentRoomId || gameStatus !== 'PLAYING') return;
     let changed = false;
-    if (['w', 'arrowup'].includes(e.key.toLowerCase())) { inputs.up = true; changed = true; }
-    if (['s', 'arrowdown'].includes(e.key.toLowerCase())) { inputs.down = true; changed = true; }
-    if (['a', 'arrowleft'].includes(e.key.toLowerCase())) { inputs.left = true; changed = true; }
-    if (['d', 'arrowright'].includes(e.key.toLowerCase())) { inputs.right = true; changed = true; }
-    if (e.code === 'Space' && !inputs.kick) { inputs.kick = true; changed = true; }
+    const key = e.key.toLowerCase();
+    const code = e.code;
     
-    e.preventDefault(); // Stop page scroll from arrow keys
-    if (changed) updateInputs();
+    // P1 Controls: WASD + Space
+    if (key === 'w') { inputs.up = true; changed = true; }
+    if (key === 's') { inputs.down = true; changed = true; }
+    if (key === 'a') { inputs.left = true; changed = true; }
+    if (key === 'd') { inputs.right = true; changed = true; }
+    if (code === 'Space') { inputs.kick = true; changed = true; }
+
+    // P2 Controls: Arrows + Plus
+    if (code === 'ArrowUp') { inputs2.up = true; changed = true; }
+    if (code === 'ArrowDown') { inputs2.down = true; changed = true; }
+    if (code === 'ArrowLeft') { inputs2.left = true; changed = true; }
+    if (code === 'ArrowRight') { inputs2.right = true; changed = true; }
+    if (key === '+' || code === 'NumpadAdd') { inputs2.kick = true; changed = true; }
+    
+    // Prevent default scroll
+    if (['arrowup','arrowdown','arrowleft','arrowright',' '].includes(key)) e.preventDefault();
+    
+    if (changed) {
+        updateInputs();
+        // Immediate local movement for P1
+        if (localPredicted.active) {
+            if (inputs.up) localPredicted.vy -= PRED_ACC;
+            if (inputs.down) localPredicted.vy += PRED_ACC;
+            if (inputs.left) localPredicted.vx -= PRED_ACC;
+            if (inputs.right) localPredicted.vx += PRED_ACC;
+        }
+        // Immediate local movement for P2
+        if (localPredicted2.active) {
+            if (inputs2.up) localPredicted2.vy -= PRED_ACC;
+            if (inputs2.down) localPredicted2.vy += PRED_ACC;
+            if (inputs2.left) localPredicted2.vx -= PRED_ACC;
+            if (inputs2.right) localPredicted2.vx += PRED_ACC;
+        }
+    }
 });
 
 window.addEventListener('keyup', e => {
     if (!currentRoomId) return;
     let changed = false;
-    if (['w', 'arrowup'].includes(e.key.toLowerCase())) { inputs.up = false; changed = true; }
-    if (['s', 'arrowdown'].includes(e.key.toLowerCase())) { inputs.down = false; changed = true; }
-    if (['a', 'arrowleft'].includes(e.key.toLowerCase())) { inputs.left = false; changed = true; }
-    if (['d', 'arrowright'].includes(e.key.toLowerCase())) { inputs.right = false; changed = true; }
-    if (e.code === 'Space') { inputs.kick = false; changed = true; }
+    const key = e.key.toLowerCase();
+    const code = e.code;
+
+    // P1
+    if (key === 'w') { inputs.up = false; changed = true; }
+    if (key === 's') { inputs.down = false; changed = true; }
+    if (key === 'a') { inputs.left = false; changed = true; }
+    if (key === 'd') { inputs.right = false; changed = true; }
+    if (code === 'Space') { inputs.kick = false; changed = true; }
+
+    // P2
+    if (code === 'ArrowUp') { inputs2.up = false; changed = true; }
+    if (code === 'ArrowDown') { inputs2.down = false; changed = true; }
+    if (code === 'ArrowLeft') { inputs2.left = false; changed = true; }
+    if (code === 'ArrowRight') { inputs2.right = false; changed = true; }
+    if (key === '+' || code === 'NumpadAdd') { inputs2.kick = false; changed = true; }
     
     if (changed) updateInputs();
 });

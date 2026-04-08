@@ -4,9 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="google-site-verification" content="dXXOlmHUZoMv3nByovEUZ1n1mBibbJEg0I1FJDBTdwg" />
-    <title>PitchBlitz - Online Multiplayer Physics Soccer</title>
-    <meta name="description" content="Play PitchBlitz! A highly competitive, 100% free online multiplayer 2D physics soccer game. Form teams, customize your jersey, and compete in tournaments.">
-    <meta name="keywords" content="PitchBlitz, multiplayer soccer browser game, 2D physics soccer, haxball alternative, free online soccer, tournament soccer, io games">
+    <title>Zoccer - Top-Down Physics Soccer</title>
+    <meta name="description" content="Play Zoccer! Fast-paced, top-down multiplayer 2D physics soccer. Minimal lag, pure skill.">
+    <meta name="keywords" content="Zoccer, 2D soccer game, browser game, physics soccer, multiplayer soccer">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
 </head>
@@ -15,8 +15,8 @@
     <div id="ui-layer">
         <!-- Landing Page -->
         <div id="landing-modal" class="modal active">
-            <h1 class="logo">PITCH<span>BLITZ</span></h1>
-            <p class="subtitle">No Pitch, No Pulse. Pure Physics Soccer.</p>
+            <h1 class="logo">ZOCCER</h1>
+            <p class="subtitle">Fast, Fluid, Frictionless. Pure Soccer Physics.</p>
             <button id="btn-play-now" class="btn primary">Play Now</button>
         </div>
 
@@ -79,7 +79,10 @@
             <h2>Room List</h2>
             <div class="room-controls">
                 <button id="btn-refresh-rooms" class="btn secondary">Refresh</button>
-                <button id="btn-open-create-room" class="btn primary">Create Room</button>
+                <div class="room-controls-group">
+                    <button id="btn-open-practice" class="btn secondary">Practice Mode</button>
+                    <button id="btn-open-create-room" class="btn primary">Create Room</button>
+                </div>
             </div>
             <div class="table-container">
                 <table id="rooms-table">
@@ -139,6 +142,27 @@
             <div class="modal-actions">
                 <button id="btn-cancel-create" class="btn ghost">Cancel</button>
                 <button id="btn-create-room" class="btn primary">Create</button>
+            </div>
+        </div>
+
+        <!-- Practice Room Modal (Offline/Same PC) -->
+        <div id="practice-room-modal" class="modal">
+            <h2>Practice Mode</h2>
+            <div class="input-group">
+                <label>Mode Type</label>
+                <select id="input-practice-type">
+                    <option value="bots_1v1">vs AI (1v1)</option>
+                    <option value="bots_2v2">vs AI (2v2)</option>
+                    <option value="bots_3v3">vs AI (3v3)</option>
+                    <option value="local_1v1">Local 2-Player (Same PC)</option>
+                </select>
+            </div>
+            <p class="subtitle" style="text-align: left;">
+                <span id="practice-hint">AI difficulty is balanced for fun.</span>
+            </p>
+            <div class="modal-actions">
+                <button id="btn-cancel-practice" class="btn ghost">Cancel</button>
+                <button id="btn-start-practice" class="btn primary">Start Practice</button>
             </div>
         </div>
 

@@ -8,18 +8,20 @@ const server = http.createServer(app);
 const io = new Server(server);
 
 app.use(express.static(path.join(__dirname, 'public')));
-app.use(express.static(__dirname)); // Fallback if files are uploaded directly to the root folder
+app.use(express.static(__dirname));
 
 const PORT = process.env.PORT || 3000;
 
 // Game Config
-const TICK_RATE = 128; // Higher = smoother physics & less lag
-const FIELD_WIDTH = 1200;  // Default, overridden per room
-const FIELD_HEIGHT = 600;  // Default, overridden per room
+const TICK_RATE = 64;
+const FIELD_WIDTH = 1200;
+const FIELD_HEIGHT = 600;
 const GOAL_TOP = 200;
 const GOAL_BOTTOM = 400;
-const BALL_FRICTION = 0.99;
+const BALL_FRICTION = 0.985; // Slightly less friction for faster gameplay
 const PLAYER_FRICTION = 0.92;
+const BOT_ACC = 0.28; // Slightly slower than players to be fair
+const PLAYER_ACC = 0.35;
 
 function getFieldSize(maxPlayers) {
     // Scale field dynamically with player count
@@ -54,11 +56,12 @@ io.on('connection', socket => {
         const room = {
             id, name: data.name, password: data.password || '', maxPlayers: data.maxPlayers,
             mode: data.mode || 'single',
+            isPractice: !!data.isPractice,
+            practiceType: data.practiceType || '',
             tourneyTeams: data.tourneyTeams || 4,
             status: 'LOBBY',
             adminId: socket.id,
             players: new Map(),
-            // Dynamic field based on player capacity
             fieldWidth: field.w, fieldHeight: field.h,
             goalTop: field.gTop, goalBottom: field.gBot,
             ball: { x: field.w/2, y: field.h/2, vx: 0, vy: 0, radius: 10, mass: 1 },
@@ -72,6 +75,12 @@ io.on('connection', socket => {
         ROOMS.set(id, room);
         
         joinRoom(socket, id, data.nickname, data.flag, data.number);
+        
+        // Auto-configure for Practice Mode
+        if (room.isPractice) {
+            setupPracticeMode(room);
+        }
+
         currentRoom = id;
         cb({ success: true, roomId: id });
     });
@@ -172,13 +181,17 @@ io.on('connection', socket => {
         }
     });
 
-    socket.on('inputs', inputs => {
+    socket.on('inputs', data => {
         if (!currentRoom) return;
         const room = ROOMS.get(currentRoom);
         if (!room) return;
         const p = room.players.get(socket.id);
         if (p) {
-            p.inputs = inputs;
+            p.inputs = data.p1 || data; // handle old and new format
+            if (data.p2 && room.isPractice && room.practiceType === 'local_1v1') {
+                const p2 = Array.from(room.players.values()).find(pl => pl.isLocalP2);
+                if (p2) p2.inputs = data.p2;
+            }
         }
     });
 
@@ -447,6 +460,10 @@ function updatePhysics(room) {
     const FW = room.fieldWidth, FH = room.fieldHeight;
     const GT = room.goalTop, GB = room.goalBottom;
 
+    if (room.isPractice) {
+        updateBotsLogic(room);
+    }
+
     if (room.goalPause && room.goalPause > 0) {
         room.goalPause--;
         if (room.goalPause <= 0) {
@@ -463,7 +480,7 @@ function updatePhysics(room) {
         player.vx *= PLAYER_FRICTION;
         player.vy *= PLAYER_FRICTION;
         
-        const acc = 0.18; // Tuned for 128Hz
+        const acc = 0.35; // Increased acc because tick rate is lower (64 vs 128)
         if (player.inputs.up) player.vy -= acc;
         if (player.inputs.down) player.vy += acc;
         if (player.inputs.left) player.vx -= acc;
@@ -545,8 +562,8 @@ function resolveCollision(a, b, type) {
         const massSum = a.mass + b.mass;
         const p = 2 * (a.vx * nx + a.vy * ny - b.vx * nx - b.vy * ny) / massSum;
         
-        let elasticity = type === 'player_player' ? 0 : 
-                         type === 'player_ball' ? 0.2 : 0.8;
+        let elasticity = type === 'player_player' ? 0.3 : 
+                         type === 'player_ball' ? 0.05 : 0.8; // Very low elasticity for 'dribbling' touch
                          
         a.vx -= p * b.mass * nx * elasticity; 
         a.vy -= p * b.mass * ny * elasticity;
@@ -572,6 +589,105 @@ function resetPositions(room) {
         p.vx = 0; p.vy = 0;
         p.x = p.team === 'red' ? FIELD_WIDTH * 0.25 : FIELD_WIDTH * 0.75;
         p.y = FIELD_HEIGHT/2;
+    });
+}
+
+// ----- Practice & Bot AI Logic -----
+
+function setupPracticeMode(room) {
+    room.status = 'PLAYING';
+    room.timeLimit = 5;
+    room.scoreLimit = 5;
+    room.timeRemaining = room.timeLimit * 60;
+    
+    // Clear spectators and move p1 to red
+    const p1 = Array.from(room.players.values())[0];
+    if (p1) p1.team = 'red';
+
+    if (room.practiceType === 'local_1v1') {
+        // Add a second local player
+        const p2Id = 'local_p2_' + room.id;
+        room.players.set(p2Id, {
+            id: p2Id, isLocalP2: true, nickname: 'Player 2', flag: p1.flag, number: 11, team: 'blue',
+            x: 0, y: 0, vx: 0, vy: 0, radius: 15, mass: 2,
+            inputs: { up: false, down: false, left: false, right: false, kick: false }
+        });
+    } else {
+        // Spawning bots
+        const count = parseInt(room.practiceType.split('_')[1][0]);
+        // Red team bots (to fill)
+        for(let i=1; i<count; i++) {
+            addBot(room, 'red', `Bot Red ${i}`);
+        }
+        // Blue team bots
+        for(let i=0; i<count; i++) {
+            addBot(room, 'blue', `Bot Blue ${i+1}`);
+        }
+    }
+    resetPositions(room);
+}
+
+function addBot(room, team, name) {
+    const id = 'bot_' + generateId();
+    room.players.set(id, {
+        id, isBot: true, nickname: name, flag: 'un', number: Math.floor(Math.random()*99),
+        team, x: 0, y: 0, vx: 0, vy: 0, radius: 15, mass: 2,
+        inputs: { up: false, down: false, left: false, right: false, kick: false }
+    });
+}
+
+function updateBotsLogic(room) {
+    const ball = room.ball;
+    const players = Array.from(room.players.values());
+    
+    players.forEach(p => {
+        if (!p.isBot) return;
+
+        // Reset inputs
+        p.inputs = { up: false, down: false, left: false, right: false, kick: false };
+
+        const dx = ball.x - p.x;
+        const dy = ball.y - p.y;
+        const dist = Math.sqrt(dx*dx + dy*dy);
+        const isRed = p.team === 'red';
+        const targetGoalX = isRed ? room.fieldWidth : 0;
+        
+        // Simple Role: closest to ball attacks, others defend
+        const teammates = players.filter(pl => pl.team === p.team);
+        const dists = teammates.map(pl => Math.sqrt(Math.pow(ball.x - pl.x, 2) + Math.pow(ball.y - pl.y, 2)));
+        const minDist = Math.min(...dists);
+        const isAttacker = dist === minDist;
+
+        if (isAttacker) {
+            // Move to ball
+            if (dx > 5) p.inputs.right = true;
+            if (dx < -5) p.inputs.left = true;
+            if (dy > 5) p.inputs.down = true;
+            if (dy < -5) p.inputs.up = true;
+            
+            // Kick if close and facing right goal
+            if (dist < p.radius + ball.radius + 15) {
+                const towardGoal = isRed ? (ball.vx > 0 || dx > 0) : (ball.vx < 0 || dx < 0);
+                if (towardGoal) p.inputs.kick = true;
+            }
+        } else {
+            // Defensive position
+            const defX = isRed ? room.fieldWidth * 0.2 : room.fieldWidth * 0.8;
+            const defY = room.fieldHeight / 2 + (dy * 0.5); // shadow the ball Y
+            const ddx = defX - p.x;
+            const ddy = defY - p.y;
+            if (ddx > 10) p.inputs.right = true;
+            if (ddx < -10) p.inputs.left = true;
+            if (ddy > 10) p.inputs.down = true;
+            if (ddy < -10) p.inputs.up = true;
+        }
+
+        // Apply bot acceleration
+        const acc = BOT_ACC;
+        if (p.inputs.up) p.vy -= acc;
+        if (p.inputs.down) p.vy += acc;
+        if (p.inputs.left) p.vx -= acc;
+        if (p.inputs.right) p.vx += acc;
     });
 }
 
