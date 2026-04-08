@@ -625,6 +625,7 @@ function setupPracticeMode(room) {
         }
     }
     resetPositions(room);
+    io.to(room.id).emit('gameStarted');
 }
 
 function addBot(room, team, name) {

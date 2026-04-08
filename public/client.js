@@ -1,5 +1,10 @@
 const socket = io();
 
+window.onerror = function(msg, url, line, col, error) {
+    alert(`CRITICAL ERROR:\n${msg}\nAt: ${url}:${line}:${col}`);
+    return false;
+};
+
 // UI Elements
 const uiLayer = document.getElementById('ui-layer');
 const gameLayer = document.getElementById('game-layer');
@@ -9,13 +14,22 @@ const roomListModal = document.getElementById('room-list-modal');
 const createRoomModal = document.getElementById('create-room-modal');
 const passwordModal = document.getElementById('password-modal');
 const roomLobbyModal = document.getElementById('room-lobby-modal');
+const practiceRoomModal = document.getElementById('practice-room-modal');
 
 let myNickname = '';
 let myFlag = '🏳️';
 let myNumber = 10;
 let currentRoomId = null;
 let isRoomAdmin = false;
-let gameStatus = 'LOBBY'; // LOBBY, BRACKET, PLAYING
+let gameStatus = 'LOBBY'; 
+const VERSION = 'v1.0.7';
+console.log("Zoccer Client Version:", VERSION);
+alert("Zoccer " + VERSION + " Loaded!");
+
+window.DEBUG_START = () => {
+    console.warn("DEBUG: Forcing game start signal...");
+    socket.emit('startGame', { timeLimit: 3, scoreLimit: 3 });
+};
 
 // --- Flag Image Cache ---
 const flagImageCache = {};
@@ -42,8 +56,9 @@ function drawPreview() {
     pCtx.strokeStyle = '#000';
     pCtx.stroke();
     
-    // Draw Flag Image
-    const code = document.getElementById('input-flag').value;
+    const codeInput = document.getElementById('input-flag');
+    if (!codeInput) return;
+    const code = codeInput.value;
     const flagImg = getFlagImage(code);
     if (flagImg.complete && flagImg.naturalWidth > 0) {
         pCtx.save();
@@ -54,7 +69,6 @@ function drawPreview() {
         pCtx.restore();
     }
 
-    // Draw Number
     pCtx.fillStyle = 'white';
     pCtx.strokeStyle = 'black';
     pCtx.lineWidth = 3;
@@ -74,6 +88,9 @@ function showModal(modal) {
     document.querySelectorAll('.modal').forEach(m => m.classList.remove('active'));
     modal.classList.add('active');
 }
+function hideModal(modal) {
+    if (modal) modal.classList.remove('active');
+}
 
 document.getElementById('btn-play-now').onclick = () => showModal(nicknameModal);
 
@@ -90,7 +107,8 @@ document.getElementById('btn-submit-nickname').onclick = () => {
     }
 };
 
-document.getElementById('input-room-mode').addEventListener('change', (e) => {
+const inputRoomMode = document.getElementById('input-room-mode');
+inputRoomMode.addEventListener('change', (e) => {
     const isTourney = e.target.value === 'tournament';
     if (isTourney) {
         document.getElementById('tourney-teams-group').classList.remove('hidden');
@@ -102,28 +120,61 @@ document.getElementById('input-room-mode').addEventListener('change', (e) => {
 });
 
 document.getElementById('input-tourney-teams').addEventListener('change', (e) => {
-    // Keep max value in sync for server but hidden from user
     document.getElementById('input-room-max').value = parseInt(e.target.value) * 2;
 });
 
 document.getElementById('btn-refresh-rooms').onclick = loadRooms;
 document.getElementById('btn-open-create-room').onclick = () => showModal(createRoomModal);
 document.getElementById('btn-cancel-create').onclick = () => showModal(roomListModal);
+document.getElementById('btn-open-practice').onclick = () => showModal(practiceRoomModal);
+document.getElementById('btn-cancel-practice').onclick = () => showModal(roomListModal);
 
 document.getElementById('btn-create-room').onclick = () => {
     const name = document.getElementById('input-room-name').value;
     const pwd = document.getElementById('input-room-password').value;
-    const mode = document.getElementById('input-room-mode').value;
+    const mode = inputRoomMode.value;
     const isTourney = mode === 'tournament';
     const tourneyTeams = parseInt(document.getElementById('input-tourney-teams').value) || 4;
     const max = isTourney ? tourneyTeams * 2 : parseInt(document.getElementById('input-room-max').value);
+    
     if (!name) return alert("Room name required");
     
-    socket.emit('createRoom', { name, password: pwd, maxPlayers: max, mode, tourneyTeams, nickname: myNickname, flag: myFlag, number: myNumber }, (res) => {
+    socket.emit('createRoom', { 
+        name, password: pwd, maxPlayers: max, mode, tourneyTeams, 
+        nickname: myNickname, flag: myFlag, number: myNumber 
+    }, (res) => {
         if (res.success) enterLobby(res.roomId);
         else alert(res.error);
     });
 };
+
+document.getElementById('btn-start-practice').addEventListener('click', () => {
+    alert("ACTION: Start Practice Clicked!");
+    const type = document.getElementById('input-practice-type').value;
+    socket.emit('createRoom', {
+        name: myNickname + "'s Practice",
+        password: '',
+        maxPlayers: type === 'bots_3v3' ? 6 : (type === 'bots_2v2' ? 4 : 2),
+        mode: 'single',
+        isPractice: true,
+        practiceType: type,
+        nickname: myNickname,
+        flag: myFlag,
+        number: myNumber
+    }, (res) => {
+        if (res.success) {
+            console.log("Practice room created:", res.roomId);
+            currentRoomId = res.roomId;
+            hideModal(practiceRoomModal);
+            hideModal(roomListModal);
+            alert("SUCCESS: Practice Mode Started! Moving to court...");
+            goToCourt();
+        } else {
+            console.error("Practice creation failed:", res.error);
+            alert("SERVER ERROR: " + res.error);
+        }
+    });
+});
 
 function loadRooms() {
     socket.emit('getRooms', (rooms) => {
@@ -142,7 +193,6 @@ function loadRooms() {
     });
 }
 
-// Make globally accessible for inline onclick
 window.joinRoom = function(id, hasPassword) {
     if (hasPassword) {
         showModal(passwordModal);
@@ -158,9 +208,8 @@ window.joinRoom = function(id, hasPassword) {
 
 function attemptJoin(id, password) {
     socket.emit('joinRoom', { roomId: id, password, nickname: myNickname, flag: myFlag, number: myNumber }, (res) => {
-        if (res.success) {
-            enterLobby(id);
-        } else {
+        if (res.success) enterLobby(id);
+        else {
             alert(res.error);
             showModal(roomListModal);
         }
@@ -171,7 +220,7 @@ function enterLobby(roomId) {
     currentRoomId = roomId;
     gameStatus = 'LOBBY';
     gameLayer.classList.add('hidden');
-    uiLayer.style.display = 'flex';
+    uiLayer.classList.remove('hidden');
     showModal(roomLobbyModal);
     document.getElementById('lobby-room-name').innerText = "Room Lobby";
 }
@@ -181,17 +230,13 @@ socket.on('lobbyUpdate', data => {
     
     const adminPanel = document.getElementById('admin-controls-panel');
     isRoomAdmin = (data.adminId === socket.id);
-    if(isRoomAdmin) {
-        adminPanel.classList.remove('hidden');
-    } else {
-        adminPanel.classList.add('hidden');
-    }
+    if(isRoomAdmin) adminPanel.classList.remove('hidden');
+    else adminPanel.classList.add('hidden');
 
     const flagImg = code => `<img src="https://flagcdn.com/w20/${code || 'un'}.png" style="width:18px;height:12px;border-radius:2px;vertical-align:middle;margin-right:4px;">`;
     const container = document.getElementById('lobby-container');
 
     if (data.mode === 'tournament') {
-        // ---- TOURNAMENT DRAW VIEW ----
         const numTeams = data.tourneyTeams || 4;
         const teamMap = {};
         for (let i = 1; i <= numTeams; i++) teamMap[i] = [];
@@ -230,7 +275,6 @@ socket.on('lobbyUpdate', data => {
         html += `</div></div>`;
         container.innerHTML = html;
     } else {
-        // ---- SINGLE MATCH 3-COLUMN VIEW ----
         const mapPlayers = list => list.map(p => `
             <li>
                 <span>${flagImg(p.flag)}<b>${p.number}</b> ${p.nickname} ${p.id === data.adminId ? '👑' : ''}</span>
@@ -258,87 +302,27 @@ socket.on('lobbyUpdate', data => {
     }
 });
 
-// Admin global function
 window.adminMove = function(playerId, team) {
     socket.emit('adminMovePlayer', { playerId, team });
 }
 
-// Room List UI logic
-const btnOpenPractice = document.getElementById('btn-open-practice');
-const practiceRoomModal = document.getElementById('practice-room-modal');
-const btnStartPractice = document.getElementById('btn-start-practice');
-const btnCancelPractice = document.getElementById('btn-cancel-practice');
-const inputPracticeType = document.getElementById('input-practice-type');
-
-btnOpenPractice.onclick = () => showModal(practiceRoomModal);
-btnCancelPractice.onclick = () => hideModal(practiceRoomModal);
-
-btnStartPractice.onclick = () => {
-    const type = inputPracticeType.value;
-    socket.emit('createRoom', {
-        name: nickname + "'s Practice",
-        password: '',
-        maxPlayers: type === 'bots_3v3' ? 6 : (type === 'bots_2v2' ? 4 : 2),
-        mode: 'single',
-        isPractice: true,
-        practiceType: type,
-        nickname: nickname,
-        flag: flagInput.value,
-        number: numberInput.value
-    }, (res) => {
-        if (res.success) {
-            currentRoomId = res.roomId;
-            hideModal(practiceRoomModal);
-            hideModal(roomListModal);
-            uiLayer.style.display = 'none';
-        }
-    });
-};
-
-btnOpenCreateRoom.onclick = () => {
-    showModal(createRoomModal);
-};
-
-inputRoomMode.onchange = () => {
-    if (inputRoomMode.value === 'tournament') {
-        document.getElementById('tourney-teams-group').classList.remove('hidden');
-        document.getElementById('max-players-group').classList.add('hidden');
-    } else {
-        document.getElementById('tourney-teams-group').classList.add('hidden');
-        document.getElementById('max-players-group').classList.remove('hidden');
-    }
-};
-
-btnCreateRoom.onclick = () => {
-    const name = document.getElementById('input-room-name').value || (nickname + "'s Room");
-    const password = document.getElementById('input-room-password').value;
-    const mode = inputRoomMode.value;
-    const maxPlayers = parseInt(document.getElementById('input-room-max').value);
-    const tourneyTeams = parseInt(document.getElementById('input-tourney-teams').value);
-    
-    socket.emit('createRoom', { 
-        name, password, mode, maxPlayers, tourneyTeams,
-        nickname, flag: flagInput.value, number: numberInput.value 
-    }, (res) => {
-        if (res.success) {
-            currentRoomId = res.roomId;
-            hideModal(createRoomModal);
-            hideModal(roomListModal);
-            uiLayer.style.display = 'none';
-        } else {
-            alert(res.error);
-        }
-    });
-};
-
-document.getElementById('btn-start-game').onclick = () => {
+document.getElementById('btn-start-game').addEventListener('click', () => {
+    alert("ACTION: Start Game Clicked!");
     const timeLimit = parseInt(document.getElementById('input-time-limit').value) || 3;
     const scoreLimit = parseInt(document.getElementById('input-score-limit').value) || 3;
+    console.log("Requesting Match Start...", { timeLimit, scoreLimit });
+    alert("SIGNAL: Start Match Request Sent to Server...");
     socket.emit('startGame', { timeLimit, scoreLimit });
-};
+});
 
 document.getElementById('btn-lobby-leave').onclick = () => {
-    leaveCurrentRoom();
+    socket.emit('leaveRoom');
+    currentRoomId = null;
+    gameStatus = 'LOBBY';
+    gameLayer.classList.add('hidden');
+    uiLayer.classList.remove('hidden');
+    loadRooms();
+    showModal(roomListModal);
 };
 
 document.getElementById('btn-leave-room').onclick = () => {
@@ -347,7 +331,7 @@ document.getElementById('btn-leave-room').onclick = () => {
 
 socket.on('showBracket', (bracketData) => {
     gameStatus = 'BRACKET';
-    uiLayer.style.display = 'none';
+    uiLayer.classList.add('hidden');
     gameLayer.classList.add('hidden');
     document.getElementById('bracket-layer').classList.remove('hidden');
     
@@ -355,7 +339,6 @@ socket.on('showBracket', (bracketData) => {
         document.getElementById('btn-advance-bracket').classList.remove('hidden');
     }
 
-    // Render tree visually
     const container = document.getElementById('bracket-container');
     container.innerHTML = '';
     
@@ -386,17 +369,28 @@ document.getElementById('btn-advance-bracket').onclick = () => {
     socket.emit('advanceBracket');
 };
 
-socket.on('gameStarted', (state) => {
-    gameStatus = 'PLAYING';
-    uiLayer.style.display = 'none';
-    document.getElementById('bracket-layer').classList.add('hidden');
-    gameLayer.classList.remove('hidden');
-    resizeCanvas();
+socket.on('gameStarted', () => {
+    console.log("Event: gameStarted received from server");
+    alert("Game Started! Moving to court...");
+    goToCourt();
 });
+
+function goToCourt() {
+    try {
+        console.log("Transitioning to court view...");
+        gameStatus = 'PLAYING';
+        uiLayer.classList.add('hidden');
+        const bracket = document.getElementById('bracket-layer');
+        if (bracket) bracket.classList.add('hidden');
+        gameLayer.classList.remove('hidden');
+        resizeCanvas();
+    } catch (e) {
+        alert("Error in goToCourt: " + e.message);
+    }
+}
 
 socket.on('gameEnded', (result) => {
     gameStatus = 'LOBBY';
-    // Show win celebration before going back to lobby
     if (result && result.winner) {
         const color = result.winner === 'red' ? '#ef4444' : '#3b82f6';
         showCelebration(
@@ -408,32 +402,21 @@ socket.on('gameEnded', (result) => {
         setTimeout(() => {
             hideCelebration();
             gameLayer.classList.add('hidden');
-            uiLayer.style.display = 'flex';
+            uiLayer.classList.remove('hidden');
             showModal(roomLobbyModal);
         }, 4000);
     } else {
         gameLayer.classList.add('hidden');
-        uiLayer.style.display = 'flex';
+        uiLayer.classList.remove('hidden');
         showModal(roomLobbyModal);
         if(result && result.msg) alert(result.msg);
     }
 });
 
-function leaveCurrentRoom() {
-    socket.emit('leaveRoom');
-    currentRoomId = null;
-    gameStatus = 'LOBBY';
-    gameLayer.classList.add('hidden');
-    uiLayer.style.display = 'flex';
-    loadRooms();
-    showModal(roomListModal);
-}
-
-// --- Celebration System (Goals & Wins) ---
+// --- Celebration System ---
 const celebOverlay = document.getElementById('celebration-overlay');
 const celebTitle = document.getElementById('celebration-title');
 const celebSub = document.getElementById('celebration-sub');
-let confettiTimeout = null;
 
 function spawnConfetti(count = 80) {
     const colors = ['#ef4444','#3b82f6','#fbbf24','#10b981','#f97316','#8b5cf6','#ec4899','#ffffff'];
@@ -456,9 +439,7 @@ function spawnConfetti(count = 80) {
 function showCelebration(title, sub, bgColor, isWin = false) {
     celebTitle.textContent = title;
     celebSub.textContent = sub;
-    celebOverlay.style.background = bgColor
-        ? `radial-gradient(ellipse at center, ${bgColor}55 0%, rgba(0,0,0,0.7) 100%)`
-        : 'rgba(0,0,0,0.6)';
+    celebOverlay.style.background = bgColor ? `radial-gradient(ellipse at center, ${bgColor}55 0%, rgba(0,0,0,0.7) 100%)` : 'rgba(0,0,0,0.6)';
     celebOverlay.classList.add('active');
     spawnConfetti(isWin ? 150 : 80);
 }
@@ -467,21 +448,19 @@ function hideCelebration() {
     celebOverlay.classList.remove('active');
 }
 
-// Listen for goal events from server
 socket.on('goalScored', (data) => {
     const color = data.team === 'red' ? '#ef4444' : '#3b82f6';
     showCelebration(`⚽ GOAL! ${data.team.toUpperCase()}`, `Score: ${data.score.red} - ${data.score.blue}`, color);
     setTimeout(hideCelebration, 2800);
 });
 
-// --- Prediction state for local player(s) ---
+// --- Game Loop & Rendering ---
 let localPredicted = { x: 0, y: 0, vx: 0, vy: 0, active: false };
-let localPredicted2 = { x: 0, y: 0, vx: 0, vy: 0, active: false }; // For local P2 in Same-PC mode
+let localPredicted2 = { x: 0, y: 0, vx: 0, vy: 0, active: false };
 
-// Canvas setup (now after celebrationSystem is defined)
 const canvas = document.getElementById('game-canvas');
 const ctx = canvas.getContext('2d');
-let FIELD_W = 1200; // Dynamic: updated from server on first gameState
+let FIELD_W = 1200;
 let FIELD_H = 600;
 let GOAL_T = 200;
 let GOAL_B = 400;
@@ -490,17 +469,12 @@ function resizeCanvas() {
     const ratio = FIELD_W / FIELD_H;
     let w = window.innerWidth;
     let h = window.innerHeight;
-    if (w / h > ratio) {
-        w = h * ratio;
-    } else {
-        h = w / ratio;
-    }
+    if (w / h > ratio) w = h * ratio;
+    else h = w / ratio;
     canvas.width = FIELD_W;
     canvas.height = FIELD_H;
     canvas.style.width = w + 'px';
     canvas.style.height = h + 'px';
-    canvas.style.alignSelf = 'center';
-    canvas.style.margin = 'auto';
 }
 window.addEventListener('resize', resizeCanvas);
 
@@ -508,9 +482,7 @@ let gameState = null;
 let lastStateTime = Date.now();
 socket.on('gameState', state => {
     if (gameStatus !== 'PLAYING') return;
-    
     lastStateTime = Date.now();
-    // Update dynamic field dimensions from server
     if (state.fieldWidth) {
         FIELD_W = state.fieldWidth;
         FIELD_H = state.fieldHeight;
@@ -520,288 +492,155 @@ socket.on('gameState', state => {
     }
     gameState = state;
 
-    // Sync local prediction with authoritative server position
     const me = state.players.find(p => p.id === socket.id);
     if (me) {
-        // Snap if very far off (reconciliation)
-        const dx = me.x - localPredicted.x;
-        const dy = me.y - localPredicted.y;
-        const drift = Math.sqrt(dx*dx + dy*dy);
-        if (drift > 40) {
-            localPredicted.x = me.x;
-            localPredicted.y = me.y;
-        } else {
-            // Smooth blend toward server truth
-            localPredicted.x += dx * 0.35;
-            localPredicted.y += dy * 0.35;
-        }
-        localPredicted.vx = me.vx || 0;
-        localPredicted.vy = me.vy || 0;
-        localPredicted.active = true;
+        const dx = me.x - localPredicted.x, dy = me.y - localPredicted.y;
+        if (Math.sqrt(dx*dx + dy*dy) > 40) { localPredicted.x = me.x; localPredicted.y = me.y; }
+        else { localPredicted.x += dx * 0.35; localPredicted.y += dy * 0.35; }
+        localPredicted.vx = me.vx || 0; localPredicted.vy = me.vy || 0; localPredicted.active = true;
     }
 
-    // Sync Local P2 prediction
     const p2 = state.players.find(p => p.isLocalP2);
     if (p2) {
-        const dx = p2.x - localPredicted2.x;
-        const dy = p2.y - localPredicted2.y;
-        if (Math.sqrt(dx*dx + dy*dy) > 40) {
-            localPredicted2.x = p2.x;
-            localPredicted2.y = p2.y;
-        } else {
-            localPredicted2.x += dx * 0.35;
-            localPredicted2.y += dy * 0.35;
-        }
-        localPredicted2.vx = p2.vx || 0;
-        localPredicted2.vy = p2.vy || 0;
-        localPredicted2.active = true;
+        const dx = p2.x - localPredicted2.x, dy = p2.y - localPredicted2.y;
+        if (Math.sqrt(dx*dx + dy*dy) > 40) { localPredicted2.x = p2.x; localPredicted2.y = p2.y; }
+        else { localPredicted2.x += dx * 0.35; localPredicted2.y += dy * 0.35; }
+        localPredicted2.vx = p2.vx || 0; localPredicted2.vy = p2.vy || 0; localPredicted2.active = true;
     }
-    // Show event overlay - use new celebration system instead of old overlay
-    // (goalScored socket event handles goal animations)
 
     document.getElementById('score-red').innerText = state.score.red;
     document.getElementById('score-blue').innerText = state.score.blue;
-    
-    // Formatting timer string manually to ensure exactly MM:SS shape
     const pad = n => n.toString().padStart(2, '0');
-    const mins = Math.floor(state.timeRemaining / 60);
-    const secs = state.timeRemaining % 60;
-    document.getElementById('game-timer').innerText = `${pad(mins)}:${pad(secs)}`;
+    document.getElementById('game-timer').innerText = `${pad(Math.floor(state.timeRemaining / 60))}:${pad(state.timeRemaining % 60)}`;
 
     if(state.tournament) {
         document.getElementById('tournament-banner').classList.remove('hidden');
         document.getElementById('agg-red').innerText = state.tournament.aggRed;
         document.getElementById('agg-blue').innerText = state.tournament.aggBlue;
         document.getElementById('tourney-leg').innerText = `Leg ${state.tournament.leg}`;
-    } else {
-        document.getElementById('tournament-banner').classList.add('hidden');
-    }
+    } else document.getElementById('tournament-banner').classList.add('hidden');
 });
 
-// Render Loop
+const PRED_ACC = 0.35; 
+const PRED_FRICTION = 0.92;
+
 function render() {
-    if (!gameState) {
-        requestAnimationFrame(render);
-        return;
-    }
-    
-    // Extrapolate with tighter clamp optimized for 128Hz packets
+    if (!gameState) { requestAnimationFrame(render); return; }
     const now = Date.now();
-    let dt = (now - lastStateTime) / (1000 / 128); // 1.0 = 1 server tick (128hz)
-    if (dt > 2) dt = 2; // Short clamp: packets arrive frequently at 128Hz
+    let dt = (now - lastStateTime) / (1000 / 64); // Optimized for 64hz
+    if (dt > 2) dt = 2;
 
     ctx.clearRect(0, 0, FIELD_W, FIELD_H);
-    
-    // Draw Field Map
-    ctx.fillStyle = '#4ade80';
-    ctx.fillRect(0, 0, FIELD_W, FIELD_H);
-    ctx.strokeStyle = '#22c55e';
-    ctx.lineWidth = 40;
-    // Alternating stripe stripes
     for (let x = 0; x < FIELD_W; x += 120) {
         ctx.fillStyle = x % 240 === 0 ? '#4ade80' : '#3dd56a';
         ctx.fillRect(x, 0, 120, FIELD_H);
     }
-    ctx.strokeStyle = 'rgba(255,255,255,0.7)';
-    ctx.lineWidth = 3;
+    ctx.strokeStyle = 'rgba(255,255,255,0.7)'; ctx.lineWidth = 3;
     ctx.beginPath(); ctx.moveTo(FIELD_W/2, 0); ctx.lineTo(FIELD_W/2, FIELD_H); ctx.stroke();
     ctx.beginPath(); ctx.arc(FIELD_W/2, FIELD_H/2, Math.min(FIELD_H * 0.1, 60), 0, Math.PI*2); ctx.stroke();
     ctx.strokeRect(0, FIELD_H/4, FIELD_W * 0.08, FIELD_H/2);
     ctx.strokeRect(FIELD_W - FIELD_W * 0.08, FIELD_H/4, FIELD_W * 0.08, FIELD_H/2);
-    
-    // Goals
     ctx.fillStyle = 'rgba(0,0,0,0.5)';
     ctx.fillRect(0, GOAL_T, 20, GOAL_B - GOAL_T);
     ctx.fillRect(FIELD_W - 20, GOAL_T, 20, GOAL_B - GOAL_T);
-    
-    // Goal posts
     ctx.fillStyle = '#fff';
     ctx.beginPath(); ctx.arc(0, GOAL_T, 8, 0, Math.PI*2); ctx.fill();
     ctx.beginPath(); ctx.arc(0, GOAL_B, 8, 0, Math.PI*2); ctx.fill();
     ctx.beginPath(); ctx.arc(FIELD_W, GOAL_T, 8, 0, Math.PI*2); ctx.fill();
     ctx.beginPath(); ctx.arc(FIELD_W, GOAL_B, 8, 0, Math.PI*2); ctx.fill();
 
-    // Draw Players
     gameState.players.forEach(p => {
         let ex, ey;
-        
-        // --- CLIENT SIDE PREDICTION (CSP) ---
         let pred = null;
         if (p.id === socket.id && localPredicted.active) pred = localPredicted;
         else if (p.isLocalP2 && localPredicted2.active) pred = localPredicted2;
-
         if (pred) {
-            // Predict small movements since last update
-            pred.vx *= PRED_FRICTION;
-            pred.vy *= PRED_FRICTION;
-            pred.x += pred.vx;
-            pred.y += pred.vy;
-            
-            // Field bounds
+            pred.vx *= PRED_FRICTION; pred.vy *= PRED_FRICTION;
+            pred.x += pred.vx; pred.y += pred.vy;
             pred.x = Math.max(p.radius, Math.min(FIELD_W - p.radius, pred.x));
             pred.y = Math.max(p.radius, Math.min(FIELD_H - p.radius, pred.y));
-            
-            ex = pred.x;
-            ey = pred.y;
+            ex = pred.x; ey = pred.y;
         } else {
-            // Interpolate / Extrapolate other players
             ex = p.x + ((p.inputs ? (p.vx || 0) : 0) * dt);
             ey = p.y + ((p.inputs ? (p.vy || 0) : 0) * dt);
             ex = Math.max(p.radius, Math.min(FIELD_W - p.radius, ex));
             ey = Math.max(p.radius, Math.min(FIELD_H - p.radius, ey));
         }
 
-        // Player body
-        ctx.beginPath();
-        ctx.arc(ex, ey, p.radius, 0, Math.PI * 2);
-        ctx.fillStyle = p.team === 'red' ? '#ef4444' : '#3b82f6';
-        ctx.fill();
+        ctx.beginPath(); ctx.arc(ex, ey, p.radius, 0, Math.PI * 2);
+        ctx.fillStyle = p.team === 'red' ? '#ef4444' : '#3b82f6'; ctx.fill();
+        ctx.beginPath(); ctx.arc(ex, ey, p.radius - 3, 0, Math.PI * 2);
+        ctx.strokeStyle = p.team === 'red' ? '#991b1b' : '#1e40af'; ctx.lineWidth = 2; ctx.stroke();
+        ctx.beginPath(); ctx.arc(ex, ey, p.radius, 0, Math.PI * 2); ctx.lineWidth = 3; ctx.strokeStyle = '#000'; ctx.stroke();
         
-        ctx.beginPath();
-        ctx.arc(ex, ey, p.radius - 3, 0, Math.PI * 2);
-        ctx.strokeStyle = p.team === 'red' ? '#991b1b' : '#1e40af';
-        ctx.lineWidth = 2;
-        ctx.stroke();
-
-        ctx.beginPath();
-        ctx.arc(ex, ey, p.radius, 0, Math.PI * 2);
-        ctx.lineWidth = 3;
-        ctx.strokeStyle = '#000';
-        ctx.stroke();
-        
-        // Draw Flag Image (circular clipped)
         const flagImg = getFlagImage(p.flag || 'un');
         if (flagImg.complete && flagImg.naturalWidth > 0) {
-            ctx.save();
-            ctx.beginPath();
-            ctx.arc(ex, ey - 4, 10, 0, Math.PI * 2);
-            ctx.clip();
-            ctx.drawImage(flagImg, ex - 10, ey - 14, 20, 20);
-            ctx.restore();
+            ctx.save(); ctx.beginPath(); ctx.arc(ex, ey - 4, 10, 0, Math.PI * 2); ctx.clip();
+            ctx.drawImage(flagImg, ex - 10, ey - 14, 20, 20); ctx.restore();
         }
-
-        // Print jersey number below flag inside circle
-        ctx.fillStyle = 'white';
-        ctx.strokeStyle = 'black';
-        ctx.lineWidth = 2;
-        ctx.font = 'bold 12px Inter';
-        ctx.strokeText(p.number || '', ex, ey + 8);
-        ctx.fillText(p.number || '', ex, ey + 8);
-
-        // Nickname below the player
-        ctx.font = 'bold 12px Inter';
-        ctx.strokeText(p.nickname, ex, ey + 25);
-        ctx.fillText(p.nickname, ex, ey + 25);
-        
-        // Draw kick indicator if pressing kick
+        ctx.fillStyle = 'white'; ctx.strokeStyle = 'black'; ctx.lineWidth = 2; ctx.font = 'bold 12px Inter';
+        ctx.strokeText(p.number || '', ex, ey + 8); ctx.fillText(p.number || '', ex, ey + 8);
+        ctx.font = 'bold 12px Inter'; ctx.strokeText(p.nickname, ex, ey + 25); ctx.fillText(p.nickname, ex, ey + 25);
         if (p.inputs && p.inputs.kick) {
-            ctx.beginPath();
-            ctx.arc(ex, ey, p.radius + 4, 0, Math.PI * 2);
-            ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
-            ctx.lineWidth = 3;
-            ctx.stroke();
+            ctx.beginPath(); ctx.arc(ex, ey, p.radius + 4, 0, Math.PI * 2);
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)'; ctx.lineWidth = 3; ctx.stroke();
         }
     });
-    
-    // Draw Ball
+
     const b = gameState.ball;
-    let bx = b.x + (b.vx || 0) * dt;
-    let by = b.y + (b.vy || 0) * dt;
+    let bx = b.x + (b.vx || 0) * dt, by = b.y + (b.vy || 0) * dt;
     bx = Math.max(b.radius, Math.min(FIELD_W - b.radius, bx));
     by = Math.max(b.radius, Math.min(FIELD_H - b.radius, by));
-
-    ctx.beginPath();
-    ctx.arc(bx, by, b.radius, 0, Math.PI * 2);
-    ctx.fillStyle = '#fff';
-    ctx.fill();
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = '#000';
-    ctx.stroke();
-    
-    // Ball simple pattern
-    ctx.beginPath();
-    ctx.arc(bx, by, b.radius/2, 0, Math.PI * 2);
-    ctx.fillStyle = '#111';
-    ctx.fill();
-    
+    ctx.beginPath(); ctx.arc(bx, by, b.radius, 0, Math.PI * 2); ctx.fillStyle = '#fff'; ctx.fill();
+    ctx.lineWidth = 2; ctx.strokeStyle = '#000'; ctx.stroke();
+    ctx.beginPath(); ctx.arc(bx, by, b.radius/2, 0, Math.PI * 2); ctx.fillStyle = '#111'; ctx.fill();
     requestAnimationFrame(render);
 }
 requestAnimationFrame(render);
 
-// Input handling with client-side prediction
 const inputs = { up: false, down: false, left: false, right: false, kick: false };
-const inputs2 = { up: false, down: false, left: false, right: false, kick: false }; // For same-pc mode
-
-function updateInputs() {
-    if (currentRoomId) {
-        socket.emit('inputs', { p1: inputs, p2: inputs2 });
-    }
-}
-
-const PRED_ACC = 0.35; 
-const PRED_FRICTION = 0.92;
+const inputs2 = { up: false, down: false, left: false, right: false, kick: false };
+function updateInputs() { if (currentRoomId) socket.emit('inputs', { p1: inputs, p2: inputs2 }); }
 
 window.addEventListener('keydown', e => {
     if (!currentRoomId || gameStatus !== 'PLAYING') return;
-    let changed = false;
-    const key = e.key.toLowerCase();
-    const code = e.code;
-    
-    // P1 Controls: WASD + Space
+    let changed = false; const key = e.key.toLowerCase(), code = e.code;
     if (key === 'w') { inputs.up = true; changed = true; }
     if (key === 's') { inputs.down = true; changed = true; }
     if (key === 'a') { inputs.left = true; changed = true; }
     if (key === 'd') { inputs.right = true; changed = true; }
     if (code === 'Space') { inputs.kick = true; changed = true; }
-
-    // P2 Controls: Arrows + Plus
     if (code === 'ArrowUp') { inputs2.up = true; changed = true; }
     if (code === 'ArrowDown') { inputs2.down = true; changed = true; }
     if (code === 'ArrowLeft') { inputs2.left = true; changed = true; }
     if (code === 'ArrowRight') { inputs2.right = true; changed = true; }
     if (key === '+' || code === 'NumpadAdd') { inputs2.kick = true; changed = true; }
-    
-    // Prevent default scroll
     if (['arrowup','arrowdown','arrowleft','arrowright',' '].includes(key)) e.preventDefault();
-    
     if (changed) {
         updateInputs();
-        // Immediate local movement for P1
         if (localPredicted.active) {
-            if (inputs.up) localPredicted.vy -= PRED_ACC;
-            if (inputs.down) localPredicted.vy += PRED_ACC;
-            if (inputs.left) localPredicted.vx -= PRED_ACC;
-            if (inputs.right) localPredicted.vx += PRED_ACC;
+            if (inputs.up) localPredicted.vy -= PRED_ACC; if (inputs.down) localPredicted.vy += PRED_ACC;
+            if (inputs.left) localPredicted.vx -= PRED_ACC; if (inputs.right) localPredicted.vx += PRED_ACC;
         }
-        // Immediate local movement for P2
         if (localPredicted2.active) {
-            if (inputs2.up) localPredicted2.vy -= PRED_ACC;
-            if (inputs2.down) localPredicted2.vy += PRED_ACC;
-            if (inputs2.left) localPredicted2.vx -= PRED_ACC;
-            if (inputs2.right) localPredicted2.vx += PRED_ACC;
+            if (inputs2.up) localPredicted2.vy -= PRED_ACC; if (inputs2.down) localPredicted2.vy += PRED_ACC;
+            if (inputs2.left) localPredicted2.vx -= PRED_ACC; if (inputs2.right) localPredicted2.vx += PRED_ACC;
         }
     }
 });
 
 window.addEventListener('keyup', e => {
     if (!currentRoomId) return;
-    let changed = false;
-    const key = e.key.toLowerCase();
-    const code = e.code;
-
-    // P1
+    let changed = false; const key = e.key.toLowerCase(), code = e.code;
     if (key === 'w') { inputs.up = false; changed = true; }
     if (key === 's') { inputs.down = false; changed = true; }
     if (key === 'a') { inputs.left = false; changed = true; }
     if (key === 'd') { inputs.right = false; changed = true; }
     if (code === 'Space') { inputs.kick = false; changed = true; }
-
-    // P2
     if (code === 'ArrowUp') { inputs2.up = false; changed = true; }
     if (code === 'ArrowDown') { inputs2.down = false; changed = true; }
     if (code === 'ArrowLeft') { inputs2.left = false; changed = true; }
     if (code === 'ArrowRight') { inputs2.right = false; changed = true; }
     if (key === '+' || code === 'NumpadAdd') { inputs2.kick = false; changed = true; }
-    
     if (changed) updateInputs();
 });
