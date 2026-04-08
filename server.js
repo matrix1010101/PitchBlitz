@@ -43,10 +43,12 @@ io.on('connection', socket => {
     let currentRoom = null;
 
     socket.on('getRooms', (cb) => {
-        const roomList = Array.from(ROOMS.values()).map(r => ({
-            id: r.id, name: r.name, hasPassword: !!r.password, 
-            playersCount: r.players.size, maxPlayers: r.maxPlayers
-        }));
+        const roomList = Array.from(ROOMS.values())
+            .filter(r => !r.isPractice) // Don't show practice rooms in the list
+            .map(r => ({
+                id: r.id, name: r.name, hasPassword: !!r.password, 
+                playersCount: r.players.size, maxPlayers: r.maxPlayers
+            }));
         cb(roomList);
     });
 
@@ -101,16 +103,26 @@ io.on('connection', socket => {
     });
 
     socket.on('adminMovePlayer', (data) => {
-        if (!currentRoom) return;
         const room = ROOMS.get(currentRoom);
-        if (!room || room.adminId !== socket.id || room.status !== 'LOBBY') return;
+        if (!room || room.adminId !== socket.id) return;
+        const target = room.players.get(data.playerId);
+        if (target) target.team = data.team;
+        broadcastLobbyUpdate(room);
+    });
+
+    socket.on('chatMessage', (text) => {
+        if (typeof text !== 'string' || !text.trim()) return;
+        const room = ROOMS.get(currentRoom);
+        if (!room) return;
+        const player = room.players.get(socket.id);
+        if (!player) return;
         
-        const p = room.players.get(data.playerId);
-        const validTeams = ['red', 'blue', 'spec', ...Array.from({length: room.tourneyTeams || 4}, (_, i) => `t${i+1}`)];
-        if (p && validTeams.includes(data.team)) {
-            p.team = data.team;
-            broadcastLobbyUpdate(room);
-        }
+        io.to(room.id).emit('chatMessage', {
+            id: generateId(),
+            sender: player.nickname,
+            team: player.team,
+            text: text.substring(0, 100)
+        });
     });
 
     socket.on('startGame', (opts) => {
@@ -499,6 +511,50 @@ function updatePhysics(room) {
     room.ball.vy *= BALL_FRICTION;
     room.ball.x += room.ball.vx;
     room.ball.y += room.ball.vy;
+
+    // Check Goal Posts (Circular Static Colliders)
+    const posts = [
+        { x: 0, y: GT, r: 12 }, { x: 0, y: GB, r: 12 },
+        { x: FW, y: GT, r: 12 }, { x: FW, y: GB, r: 12 }
+    ];
+
+    posts.forEach(post => {
+        const dx = room.ball.x - post.x;
+        const dy = room.ball.y - post.y;
+        const dist = Math.sqrt(dx*dx + dy*dy);
+        const minDist = room.ball.radius + post.r;
+        if (dist < minDist) {
+            // Elastic collision with static point
+            const nx = dx / dist;
+            const ny = dy / dist;
+            const scalar = room.ball.vx * nx + room.ball.vy * ny;
+            room.ball.vx = (room.ball.vx - 2 * scalar * nx) * 0.8;
+            room.ball.vy = (room.ball.vy - 2 * scalar * ny) * 0.8;
+            const overlap = minDist - dist;
+            room.ball.x += nx * overlap;
+            room.ball.y += ny * overlap;
+        }
+    });
+
+    // Check players collision with posts
+    for (let p of room.players.values()) {
+        posts.forEach(post => {
+            const dx = p.x - post.x;
+            const dy = p.y - post.y;
+            const dist = Math.sqrt(dx*dx + dy*dy);
+            const minDist = p.radius + post.r;
+            if (dist < minDist) {
+                const nx = dx / dist;
+                const ny = dy / dist;
+                const overlap = minDist - dist;
+                p.x += nx * overlap;
+                p.y += ny * overlap;
+                // Bounce player slightly
+                p.vx = (p.vx * -0.2) + (nx * 2);
+                p.vy = (p.vy * -0.2) + (ny * 2);
+            }
+        });
+    }
     
     // Create an array of active players to avoid checking spectators
     const activePlayers = Array.from(room.players.values()).filter(p => ['red','blue'].includes(p.team));
@@ -651,36 +707,48 @@ function updateBotsLogic(room) {
         const dy = ball.y - p.y;
         const dist = Math.sqrt(dx*dx + dy*dy);
         const isRed = p.team === 'red';
-        const targetGoalX = isRed ? room.fieldWidth : 0;
         
-        // Simple Role: closest to ball attacks, others defend
-        const teammates = players.filter(pl => pl.team === p.team);
-        const dists = teammates.map(pl => Math.sqrt(Math.pow(ball.x - pl.x, 2) + Math.pow(ball.y - pl.y, 2)));
-        const minDist = Math.min(...dists);
-        const isAttacker = dist === minDist;
-
-        if (isAttacker) {
-            // Move to ball
-            if (dx > 5) p.inputs.right = true;
-            if (dx < -5) p.inputs.left = true;
-            if (dy > 5) p.inputs.down = true;
-            if (dy < -5) p.inputs.up = true;
-            
-            // Kick if close and facing right goal
-            if (dist < p.radius + ball.radius + 15) {
-                const towardGoal = isRed ? (ball.vx > 0 || dx > 0) : (ball.vx < 0 || dx < 0);
-                if (towardGoal) p.inputs.kick = true;
-            }
+        // Humanizing: Introduce a tiny bit of target jitter and reaction lag
+        if (room.ticksPassed % 10 !== 0 && p.lastDecision) {
+            Object.assign(p.inputs, p.lastDecision);
         } else {
-            // Defensive position
-            const defX = isRed ? room.fieldWidth * 0.2 : room.fieldWidth * 0.8;
-            const defY = room.fieldHeight / 2 + (dy * 0.5); // shadow the ball Y
-            const ddx = defX - p.x;
-            const ddy = defY - p.y;
-            if (ddx > 10) p.inputs.right = true;
-            if (ddx < -10) p.inputs.left = true;
-            if (ddy > 10) p.inputs.down = true;
-            if (ddy < -10) p.inputs.up = true;
+            // Simple Role: closest to ball attacks, others defend
+            const teammates = players.filter(pl => pl.team === p.team);
+            const dists = teammates.map(pl => Math.sqrt(Math.pow(ball.x - pl.x, 2) + Math.pow(ball.y - pl.y, 2)));
+            const minDist = Math.min(...dists);
+            const isAttacker = dist === minDist;
+
+            if (isAttacker) {
+                // Move towards ball BUT try to get behind it relative to goal
+                const targetGoalX = isRed ? room.fieldWidth : 0;
+                const targetGoalY = room.fieldHeight / 2;
+                
+                // Point slightly behind the ball to aim at goal
+                const aimX = ball.x - (isRed ? 30 : -30);
+                const aimY = ball.y;
+
+                if (p.x < aimX - 5) p.inputs.right = true;
+                else if (p.x > aimX + 5) p.inputs.left = true;
+                
+                if (p.y < aimY - 5) p.inputs.down = true;
+                else if (p.y > aimY + 5) p.inputs.up = true;
+                
+                // Kick if close
+                if (dist < p.radius + ball.radius + 15) {
+                    const towardsOpponentGoal = isRed ? dx > 0 : dx < 0;
+                    if (towardsOpponentGoal) p.inputs.kick = true;
+                }
+            } else {
+                // Defensive position: don't just stand there, shadow the ball
+                const defX = isRed ? room.fieldWidth * 0.15 : room.fieldWidth * 0.85;
+                const defY = (room.fieldHeight / 2) + (ball.y - room.fieldHeight/2) * 0.4;
+                
+                if (p.x < defX - 10) p.inputs.right = true;
+                else if (p.x > defX + 10) p.inputs.left = true;
+                if (p.y < defY - 10) p.inputs.down = true;
+                else if (p.y > defY + 10) p.inputs.up = true;
+            }
+            p.lastDecision = { ...p.inputs };
         }
 
         // Apply bot acceleration

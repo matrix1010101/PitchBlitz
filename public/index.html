@@ -230,6 +230,19 @@
         </div>
 
         <canvas id="game-canvas"></canvas>
+
+        <div id="chat-widget">
+            <div id="chat-toggle">
+                <span id="chat-arrow">▲</span>
+                <span id="chat-title">Chat</span>
+            </div>
+            <div id="chat-content" class="minimized">
+                <div id="chat-messages"></div>
+                <div class="chat-input-row">
+                    <input type="text" id="input-chat" placeholder="Press Enter to chat..." maxlength="100">
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- Celebration overlay (goals & wins) -->
@@ -239,9 +252,6 @@
     </div>
 
     <!-- Version Footer for debugging -->
-    <div id="version-footer" style="position: fixed; bottom: 10px; right: 10px; font-size: 10px; color: rgba(255,255,255,0.3); pointer-events: none; z-index: 1000;">
-        v1.0.6
-    </div>
 
     <script src="/socket.io/socket.io.js"></script>
     <script src="client.js"></script>

@@ -1,7 +1,5 @@
-const socket = io();
-
 window.onerror = function(msg, url, line, col, error) {
-    alert(`CRITICAL ERROR:\n${msg}\nAt: ${url}:${line}:${col}`);
+    console.error(`JS ERROR: ${msg} at ${url}:${line}:${col}`);
     return false;
 };
 
@@ -19,15 +17,12 @@ const practiceRoomModal = document.getElementById('practice-room-modal');
 let myNickname = '';
 let myFlag = '🏳️';
 let myNumber = 10;
-let currentRoomId = null;
 let isRoomAdmin = false;
 let gameStatus = 'LOBBY'; 
-const VERSION = 'v1.0.7';
+const VERSION = 'v2.0.0';
 console.log("Zoccer Client Version:", VERSION);
-alert("Zoccer " + VERSION + " Loaded!");
 
 window.DEBUG_START = () => {
-    console.warn("DEBUG: Forcing game start signal...");
     socket.emit('startGame', { timeLimit: 3, scoreLimit: 3 });
 };
 
@@ -149,7 +144,6 @@ document.getElementById('btn-create-room').onclick = () => {
 };
 
 document.getElementById('btn-start-practice').addEventListener('click', () => {
-    alert("ACTION: Start Practice Clicked!");
     const type = document.getElementById('input-practice-type').value;
     socket.emit('createRoom', {
         name: myNickname + "'s Practice",
@@ -163,15 +157,12 @@ document.getElementById('btn-start-practice').addEventListener('click', () => {
         number: myNumber
     }, (res) => {
         if (res.success) {
-            console.log("Practice room created:", res.roomId);
             currentRoomId = res.roomId;
             hideModal(practiceRoomModal);
             hideModal(roomListModal);
-            alert("SUCCESS: Practice Mode Started! Moving to court...");
             goToCourt();
         } else {
             console.error("Practice creation failed:", res.error);
-            alert("SERVER ERROR: " + res.error);
         }
     });
 });
@@ -307,11 +298,8 @@ window.adminMove = function(playerId, team) {
 }
 
 document.getElementById('btn-start-game').addEventListener('click', () => {
-    alert("ACTION: Start Game Clicked!");
     const timeLimit = parseInt(document.getElementById('input-time-limit').value) || 3;
     const scoreLimit = parseInt(document.getElementById('input-score-limit').value) || 3;
-    console.log("Requesting Match Start...", { timeLimit, scoreLimit });
-    alert("SIGNAL: Start Match Request Sent to Server...");
     socket.emit('startGame', { timeLimit, scoreLimit });
 });
 
@@ -370,48 +358,9 @@ document.getElementById('btn-advance-bracket').onclick = () => {
 };
 
 socket.on('gameStarted', () => {
-    console.log("Event: gameStarted received from server");
-    alert("Game Started! Moving to court...");
     goToCourt();
 });
 
-function goToCourt() {
-    try {
-        console.log("Transitioning to court view...");
-        gameStatus = 'PLAYING';
-        uiLayer.classList.add('hidden');
-        const bracket = document.getElementById('bracket-layer');
-        if (bracket) bracket.classList.add('hidden');
-        gameLayer.classList.remove('hidden');
-        resizeCanvas();
-    } catch (e) {
-        alert("Error in goToCourt: " + e.message);
-    }
-}
-
-socket.on('gameEnded', (result) => {
-    gameStatus = 'LOBBY';
-    if (result && result.winner) {
-        const color = result.winner === 'red' ? '#ef4444' : '#3b82f6';
-        showCelebration(
-            result.winner === 'red' ? '🔴 RED WINS!' : '🔵 BLUE WINS!',
-            'Returning to lobby...',
-            color,
-            true
-        );
-        setTimeout(() => {
-            hideCelebration();
-            gameLayer.classList.add('hidden');
-            uiLayer.classList.remove('hidden');
-            showModal(roomLobbyModal);
-        }, 4000);
-    } else {
-        gameLayer.classList.add('hidden');
-        uiLayer.classList.remove('hidden');
-        showModal(roomLobbyModal);
-        if(result && result.msg) alert(result.msg);
-    }
-});
 
 // --- Celebration System ---
 const celebOverlay = document.getElementById('celebration-overlay');
@@ -455,15 +404,12 @@ socket.on('goalScored', (data) => {
 });
 
 // --- Game Loop & Rendering ---
-let localPredicted = { x: 0, y: 0, vx: 0, vy: 0, active: false };
-let localPredicted2 = { x: 0, y: 0, vx: 0, vy: 0, active: false };
-
 const canvas = document.getElementById('game-canvas');
 const ctx = canvas.getContext('2d');
 let FIELD_W = 1200;
 let FIELD_H = 600;
-let GOAL_T = 200;
-let GOAL_B = 400;
+let GT = 200;
+let GB = 400;
 
 function resizeCanvas() {
     const ratio = FIELD_W / FIELD_H;
@@ -478,35 +424,26 @@ function resizeCanvas() {
 }
 window.addEventListener('resize', resizeCanvas);
 
+function goToCourt() {
+    gameStatus = 'PLAYING';
+    uiLayer.classList.add('hidden');
+    const b = document.getElementById('bracket-layer');
+    if (b) b.classList.add('hidden');
+    gameLayer.classList.remove('hidden');
+    resizeCanvas();
+}
+
 let gameState = null;
-let lastStateTime = Date.now();
 socket.on('gameState', state => {
     if (gameStatus !== 'PLAYING') return;
-    lastStateTime = Date.now();
     if (state.fieldWidth) {
         FIELD_W = state.fieldWidth;
         FIELD_H = state.fieldHeight;
-        GOAL_T = state.goalTop;
-        GOAL_B = state.goalBottom;
+        GT = state.goalTop;
+        GB = state.goalBottom;
         resizeCanvas();
     }
     gameState = state;
-
-    const me = state.players.find(p => p.id === socket.id);
-    if (me) {
-        const dx = me.x - localPredicted.x, dy = me.y - localPredicted.y;
-        if (Math.sqrt(dx*dx + dy*dy) > 40) { localPredicted.x = me.x; localPredicted.y = me.y; }
-        else { localPredicted.x += dx * 0.35; localPredicted.y += dy * 0.35; }
-        localPredicted.vx = me.vx || 0; localPredicted.vy = me.vy || 0; localPredicted.active = true;
-    }
-
-    const p2 = state.players.find(p => p.isLocalP2);
-    if (p2) {
-        const dx = p2.x - localPredicted2.x, dy = p2.y - localPredicted2.y;
-        if (Math.sqrt(dx*dx + dy*dy) > 40) { localPredicted2.x = p2.x; localPredicted2.y = p2.y; }
-        else { localPredicted2.x += dx * 0.35; localPredicted2.y += dy * 0.35; }
-        localPredicted2.vx = p2.vx || 0; localPredicted2.vy = p2.vy || 0; localPredicted2.active = true;
-    }
 
     document.getElementById('score-red').innerText = state.score.red;
     document.getElementById('score-blue').innerText = state.score.blue;
@@ -521,15 +458,17 @@ socket.on('gameState', state => {
     } else document.getElementById('tournament-banner').classList.add('hidden');
 });
 
-const PRED_ACC = 0.35; 
-const PRED_FRICTION = 0.92;
+function drawHexagon(x, y, r) {
+    ctx.beginPath();
+    for (let i = 0; i < 6; i++) {
+        ctx.lineTo(x + r * Math.cos(i * Math.PI / 3), y + r * Math.sin(i * Math.PI / 3));
+    }
+    ctx.closePath();
+}
 
 function render() {
     if (!gameState) { requestAnimationFrame(render); return; }
-    const now = Date.now();
-    let dt = (now - lastStateTime) / (1000 / 64); // Optimized for 64hz
-    if (dt > 2) dt = 2;
-
+    
     ctx.clearRect(0, 0, FIELD_W, FIELD_H);
     for (let x = 0; x < FIELD_W; x += 120) {
         ctx.fillStyle = x % 240 === 0 ? '#4ade80' : '#3dd56a';
@@ -537,63 +476,56 @@ function render() {
     }
     ctx.strokeStyle = 'rgba(255,255,255,0.7)'; ctx.lineWidth = 3;
     ctx.beginPath(); ctx.moveTo(FIELD_W/2, 0); ctx.lineTo(FIELD_W/2, FIELD_H); ctx.stroke();
-    ctx.beginPath(); ctx.arc(FIELD_W/2, FIELD_H/2, Math.min(FIELD_H * 0.1, 60), 0, Math.PI*2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(FIELD_W/2, FIELD_H/2, 60, 0, Math.PI*2); ctx.stroke();
     ctx.strokeRect(0, FIELD_H/4, FIELD_W * 0.08, FIELD_H/2);
     ctx.strokeRect(FIELD_W - FIELD_W * 0.08, FIELD_H/4, FIELD_W * 0.08, FIELD_H/2);
-    ctx.fillStyle = 'rgba(0,0,0,0.5)';
-    ctx.fillRect(0, GOAL_T, 20, GOAL_B - GOAL_T);
-    ctx.fillRect(FIELD_W - 20, GOAL_T, 20, GOAL_B - GOAL_T);
+    
+    // Draw Goal Posts
     ctx.fillStyle = '#fff';
-    ctx.beginPath(); ctx.arc(0, GOAL_T, 8, 0, Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.arc(0, GOAL_B, 8, 0, Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.arc(FIELD_W, GOAL_T, 8, 0, Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.arc(FIELD_W, GOAL_B, 8, 0, Math.PI*2); ctx.fill();
+    ctx.strokeStyle = '#333'; ctx.lineWidth = 3;
+    const posts = [{x:0, y:GT}, {x:0, y:GB}, {x:FIELD_W, y:GT}, {x:FIELD_W, y:GB}];
+    posts.forEach(p => {
+        ctx.beginPath(); ctx.arc(p.x, p.y, 12, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+    });
 
     gameState.players.forEach(p => {
-        let ex, ey;
-        let pred = null;
-        if (p.id === socket.id && localPredicted.active) pred = localPredicted;
-        else if (p.isLocalP2 && localPredicted2.active) pred = localPredicted2;
-        if (pred) {
-            pred.vx *= PRED_FRICTION; pred.vy *= PRED_FRICTION;
-            pred.x += pred.vx; pred.y += pred.vy;
-            pred.x = Math.max(p.radius, Math.min(FIELD_W - p.radius, pred.x));
-            pred.y = Math.max(p.radius, Math.min(FIELD_H - p.radius, pred.y));
-            ex = pred.x; ey = pred.y;
-        } else {
-            ex = p.x + ((p.inputs ? (p.vx || 0) : 0) * dt);
-            ey = p.y + ((p.inputs ? (p.vy || 0) : 0) * dt);
-            ex = Math.max(p.radius, Math.min(FIELD_W - p.radius, ex));
-            ey = Math.max(p.radius, Math.min(FIELD_H - p.radius, ey));
-        }
-
-        ctx.beginPath(); ctx.arc(ex, ey, p.radius, 0, Math.PI * 2);
+        ctx.beginPath(); ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
         ctx.fillStyle = p.team === 'red' ? '#ef4444' : '#3b82f6'; ctx.fill();
-        ctx.beginPath(); ctx.arc(ex, ey, p.radius - 3, 0, Math.PI * 2);
+        ctx.beginPath(); ctx.arc(p.x, p.y, p.radius - 3, 0, Math.PI * 2);
         ctx.strokeStyle = p.team === 'red' ? '#991b1b' : '#1e40af'; ctx.lineWidth = 2; ctx.stroke();
-        ctx.beginPath(); ctx.arc(ex, ey, p.radius, 0, Math.PI * 2); ctx.lineWidth = 3; ctx.strokeStyle = '#000'; ctx.stroke();
+        ctx.beginPath(); ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2); ctx.lineWidth = 3; ctx.strokeStyle = '#000'; ctx.stroke();
         
         const flagImg = getFlagImage(p.flag || 'un');
         if (flagImg.complete && flagImg.naturalWidth > 0) {
-            ctx.save(); ctx.beginPath(); ctx.arc(ex, ey - 4, 10, 0, Math.PI * 2); ctx.clip();
-            ctx.drawImage(flagImg, ex - 10, ey - 14, 20, 20); ctx.restore();
+            ctx.save(); ctx.beginPath(); ctx.arc(p.x, p.y - 4, 10, 0, Math.PI * 2); ctx.clip();
+            ctx.drawImage(flagImg, p.x - 10, p.y - 14, 20, 20); ctx.restore();
         }
         ctx.fillStyle = 'white'; ctx.strokeStyle = 'black'; ctx.lineWidth = 2; ctx.font = 'bold 12px Inter';
-        ctx.strokeText(p.number || '', ex, ey + 8); ctx.fillText(p.number || '', ex, ey + 8);
-        ctx.font = 'bold 12px Inter'; ctx.strokeText(p.nickname, ex, ey + 25); ctx.fillText(p.nickname, ex, ey + 25);
+        ctx.strokeText(p.number || '', p.x, p.y + 8); ctx.fillText(p.number || '', p.x, p.y + 8);
+        ctx.font = 'bold 12px Inter'; ctx.strokeText(p.nickname, p.x, p.y + 25); ctx.fillText(p.nickname, p.x, p.y + 25);
         if (p.inputs && p.inputs.kick) {
-            ctx.beginPath(); ctx.arc(ex, ey, p.radius + 4, 0, Math.PI * 2);
+            ctx.beginPath(); ctx.arc(p.x, p.y, p.radius + 4, 0, Math.PI * 2);
             ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)'; ctx.lineWidth = 3; ctx.stroke();
         }
     });
 
     const b = gameState.ball;
-    let bx = b.x + (b.vx || 0) * dt, by = b.y + (b.vy || 0) * dt;
-    bx = Math.max(b.radius, Math.min(FIELD_W - b.radius, bx));
-    by = Math.max(b.radius, Math.min(FIELD_H - b.radius, by));
-    ctx.beginPath(); ctx.arc(bx, by, b.radius, 0, Math.PI * 2); ctx.fillStyle = '#fff'; ctx.fill();
+    ctx.save();
+    ctx.translate(b.x, b.y);
+    // Draw ball body
+    ctx.beginPath(); ctx.arc(0, 0, b.radius, 0, Math.PI * 2); ctx.fillStyle = '#fff'; ctx.fill();
     ctx.lineWidth = 2; ctx.strokeStyle = '#000'; ctx.stroke();
-    ctx.beginPath(); ctx.arc(bx, by, b.radius/2, 0, Math.PI * 2); ctx.fillStyle = '#111'; ctx.fill();
+    // Hexagonal pattern
+    ctx.strokeStyle = 'rgba(0,0,0,0.2)'; ctx.lineWidth = 1;
+    drawHexagon(0, 0, b.radius * 0.4); ctx.stroke();
+    for(let i=0; i<6; i++) {
+        const ang = i * Math.PI/3;
+        const hx = b.radius * 0.7 * Math.cos(ang);
+        const hy = b.radius * 0.7 * Math.sin(ang);
+        drawHexagon(hx, hy, b.radius * 0.3); ctx.stroke();
+    }
+    ctx.restore();
+
     requestAnimationFrame(render);
 }
 requestAnimationFrame(render);
@@ -618,14 +550,6 @@ window.addEventListener('keydown', e => {
     if (['arrowup','arrowdown','arrowleft','arrowright',' '].includes(key)) e.preventDefault();
     if (changed) {
         updateInputs();
-        if (localPredicted.active) {
-            if (inputs.up) localPredicted.vy -= PRED_ACC; if (inputs.down) localPredicted.vy += PRED_ACC;
-            if (inputs.left) localPredicted.vx -= PRED_ACC; if (inputs.right) localPredicted.vx += PRED_ACC;
-        }
-        if (localPredicted2.active) {
-            if (inputs2.up) localPredicted2.vy -= PRED_ACC; if (inputs2.down) localPredicted2.vy += PRED_ACC;
-            if (inputs2.left) localPredicted2.vx -= PRED_ACC; if (inputs2.right) localPredicted2.vx += PRED_ACC;
-        }
     }
 });
 
@@ -643,4 +567,47 @@ window.addEventListener('keyup', e => {
     if (code === 'ArrowRight') { inputs2.right = false; changed = true; }
     if (key === '+' || code === 'NumpadAdd') { inputs2.kick = false; changed = true; }
     if (changed) updateInputs();
+});
+
+// --- Chat Logic ---
+const chatWidget = document.getElementById('chat-widget');
+const chatToggle = document.getElementById('chat-toggle');
+const chatContent = document.getElementById('chat-content');
+const chatMessages = document.getElementById('chat-messages');
+const chatInput = document.getElementById('input-chat');
+
+chatToggle.addEventListener('click', () => {
+    chatContent.classList.toggle('minimized');
+});
+
+chatInput.addEventListener('keydown', e => {
+    if (e.key === 'Enter') {
+        const text = chatInput.value.trim();
+        if (text) {
+            socket.emit('chatMessage', text);
+            chatInput.value = '';
+        }
+    }
+    e.stopPropagation(); // Avoid triggering game inputs while typing
+});
+
+socket.on('chatMessage', data => {
+    const el = document.createElement('div');
+    el.className = 'chat-msg';
+    const color = data.team === 'red' ? '#fca5a5' : (data.team === 'blue' ? '#93c5fd' : '#fff');
+    el.innerHTML = `<b style="color:${color}">${data.sender}:</b> ${data.text}`;
+    chatMessages.appendChild(el);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+    
+    // Auto-expand if minimized and new message arrives
+    if (chatContent.classList.contains('minimized')) {
+        chatContent.classList.remove('minimized');
+    }
+});
+
+window.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && document.activeElement !== chatInput) {
+        chatInput.focus();
+        e.preventDefault();
+    }
 });
