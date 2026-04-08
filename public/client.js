@@ -1,3 +1,5 @@
+const socket = io();
+
 window.onerror = function(msg, url, line, col, error) {
     console.error(`JS ERROR: ${msg} at ${url}:${line}:${col}`);
     return false;
@@ -17,6 +19,7 @@ const practiceRoomModal = document.getElementById('practice-room-modal');
 let myNickname = '';
 let myFlag = '🏳️';
 let myNumber = 10;
+let currentRoomId = null;
 let isRoomAdmin = false;
 let gameStatus = 'LOBBY'; 
 const VERSION = 'v2.0.0';
@@ -87,9 +90,9 @@ function hideModal(modal) {
     if (modal) modal.classList.remove('active');
 }
 
-document.getElementById('btn-play-now').onclick = () => showModal(nicknameModal);
+document.getElementById('btn-play-now').addEventListener('click', () => showModal(nicknameModal));
 
-document.getElementById('btn-submit-nickname').onclick = () => {
+document.getElementById('btn-submit-nickname').addEventListener('click', () => {
     const val = document.getElementById('input-nickname').value.toUpperCase();
     if (val.length >= 1 && val.length <= 20) {
         myNickname = val;
@@ -100,7 +103,7 @@ document.getElementById('btn-submit-nickname').onclick = () => {
     } else {
         alert("Must be 1-20 letters.");
     }
-};
+});
 
 const inputRoomMode = document.getElementById('input-room-mode');
 inputRoomMode.addEventListener('change', (e) => {
