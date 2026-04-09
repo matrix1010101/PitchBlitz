@@ -629,15 +629,23 @@ tr:hover td {
     font-weight: bold;
 }
 
-#tournament-banner.hidden {
-    display: none;
+#game-layer {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background-color: #0f172a;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    overflow: hidden;
 }
 
 #game-canvas {
-    width: 100%;
-    height: 100%;
     display: block;
-    background-color: #1a1a1a; /* Backup color, painted over by JS */
+    background-color: #1a1a1a;
+    box-shadow: 0 0 50px rgba(0,0,0,0.5);
 }
 
 @keyframes fadeIn {

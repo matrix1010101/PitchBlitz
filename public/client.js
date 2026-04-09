@@ -406,6 +406,29 @@ socket.on('goalScored', (data) => {
     setTimeout(hideCelebration, 2800);
 });
 
+socket.on('gameEnded', (result) => {
+    gameStatus = 'LOBBY';
+    if (result && result.winner) {
+        const color = result.winner === 'red' ? '#ef4444' : '#3b82f6';
+        showCelebration(
+            result.winner === 'red' ? '🔴 RED WINS!' : '🔵 BLUE WINS!',
+            'Returning to lobby...',
+            color,
+            true
+        );
+        setTimeout(() => {
+            hideCelebration();
+            gameLayer.classList.add('hidden');
+            uiLayer.classList.remove('hidden');
+            showModal(roomLobbyModal);
+        }, 4000);
+    } else {
+        gameLayer.classList.add('hidden');
+        uiLayer.classList.remove('hidden');
+        showModal(roomLobbyModal);
+    }
+});
+
 // --- Game Loop & Rendering ---
 const canvas = document.getElementById('game-canvas');
 const ctx = canvas.getContext('2d');
@@ -437,8 +460,12 @@ function goToCourt() {
 }
 
 let gameState = null;
+let lastStateTime = Date.now();
+let localPlayerPos = { x: 0, y: 0, vx: 0, vy: 0 };
+
 socket.on('gameState', state => {
     if (gameStatus !== 'PLAYING') return;
+    lastStateTime = Date.now();
     if (state.fieldWidth) {
         FIELD_W = state.fieldWidth;
         FIELD_H = state.fieldHeight;
@@ -446,6 +473,23 @@ socket.on('gameState', state => {
         GB = state.goalBottom;
         resizeCanvas();
     }
+    
+    // Smooth reconciliation for Local Player
+    const me = state.players.find(p => p.id === socket.id);
+    if (me) {
+        // If drift is too large, snap. Otherwise nudging happens in render loop.
+        const dx = me.x - localPlayerPos.x;
+        const dy = me.y - localPlayerPos.y;
+        if (Math.sqrt(dx*dx + dy*dy) > 100) {
+            localPlayerPos.x = me.x;
+            localPlayerPos.y = me.y;
+        } else {
+            // Apply server velocity to our local estimate immediately
+            localPlayerPos.vx = me.vx;
+            localPlayerPos.vy = me.vy;
+        }
+    }
+
     gameState = state;
 
     document.getElementById('score-red').innerText = state.score.red;
@@ -492,22 +536,34 @@ function render() {
     });
 
     gameState.players.forEach(p => {
-        ctx.beginPath(); ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+        let drawX = p.x;
+        let drawY = p.y;
+
+        // Apply local prediction if it's the player's own circle
+        if (p.id === socket.id) {
+            // Soft-reconciliation loop: nudge local position toward server ground truth
+            localPlayerPos.x += (p.x - localPlayerPos.x) * 0.25;
+            localPlayerPos.y += (p.y - localPlayerPos.y) * 0.25;
+            drawX = localPlayerPos.x;
+            drawY = localPlayerPos.y;
+        }
+
+        ctx.beginPath(); ctx.arc(drawX, drawY, p.radius, 0, Math.PI * 2);
         ctx.fillStyle = p.team === 'red' ? '#ef4444' : '#3b82f6'; ctx.fill();
-        ctx.beginPath(); ctx.arc(p.x, p.y, p.radius - 3, 0, Math.PI * 2);
+        ctx.beginPath(); ctx.arc(drawX, drawY, p.radius - 3, 0, Math.PI * 2);
         ctx.strokeStyle = p.team === 'red' ? '#991b1b' : '#1e40af'; ctx.lineWidth = 2; ctx.stroke();
-        ctx.beginPath(); ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2); ctx.lineWidth = 3; ctx.strokeStyle = '#000'; ctx.stroke();
+        ctx.beginPath(); ctx.arc(drawX, drawY, p.radius, 0, Math.PI * 2); ctx.lineWidth = 3; ctx.strokeStyle = '#000'; ctx.stroke();
         
         const flagImg = getFlagImage(p.flag || 'un');
         if (flagImg.complete && flagImg.naturalWidth > 0) {
-            ctx.save(); ctx.beginPath(); ctx.arc(p.x, p.y - 4, 10, 0, Math.PI * 2); ctx.clip();
-            ctx.drawImage(flagImg, p.x - 10, p.y - 14, 20, 20); ctx.restore();
+            ctx.save(); ctx.beginPath(); ctx.arc(drawX, drawY - 4, 10, 0, Math.PI * 2); ctx.clip();
+            ctx.drawImage(flagImg, drawX - 10, drawY - 14, 20, 20); ctx.restore();
         }
         ctx.fillStyle = 'white'; ctx.strokeStyle = 'black'; ctx.lineWidth = 2; ctx.font = 'bold 12px Inter';
-        ctx.strokeText(p.number || '', p.x, p.y + 8); ctx.fillText(p.number || '', p.x, p.y + 8);
-        ctx.font = 'bold 12px Inter'; ctx.strokeText(p.nickname, p.x, p.y + 25); ctx.fillText(p.nickname, p.x, p.y + 25);
+        ctx.strokeText(p.number || '', drawX, drawY + 8); ctx.fillText(p.number || '', drawX, drawY + 8);
+        ctx.font = 'bold 12px Inter'; ctx.strokeText(p.nickname, drawX, drawY + 25); ctx.fillText(p.nickname, drawX, drawY + 25);
         if (p.inputs && p.inputs.kick) {
-            ctx.beginPath(); ctx.arc(p.x, p.y, p.radius + 4, 0, Math.PI * 2);
+            ctx.beginPath(); ctx.arc(drawX, drawY, p.radius + 4, 0, Math.PI * 2);
             ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)'; ctx.lineWidth = 3; ctx.stroke();
         }
     });
@@ -553,6 +609,13 @@ window.addEventListener('keydown', e => {
     if (['arrowup','arrowdown','arrowleft','arrowright',' '].includes(key)) e.preventDefault();
     if (changed) {
         updateInputs();
+        
+        // Instant Prediction: Move local position estimate immediately
+        const acc = 0.35;
+        if (inputs.up) localPlayerPos.vy -= acc;
+        if (inputs.down) localPlayerPos.vy += acc;
+        if (inputs.left) localPlayerPos.vx -= acc;
+        if (inputs.right) localPlayerPos.vx += acc;
     }
 });
 
