@@ -20,7 +20,7 @@ const GOAL_TOP = 200;
 const GOAL_BOTTOM = 400;
 const BALL_FRICTION = 0.985; // Slightly less friction for faster gameplay
 const PLAYER_FRICTION = 0.92;
-const BOT_ACC = 0.28; // Slightly slower than players to be fair
+const BOT_ACC = 0.18; // Slower bots for a more human feel
 const PLAYER_ACC = 0.35;
 
 function getFieldSize(maxPlayers) {
@@ -699,6 +699,15 @@ function updateBotsLogic(room) {
     
     players.forEach(p => {
         if (!p.isBot) return;
+
+        // Freeze logic: 2s pause every 7s total cycle (5s active, 2s pause)
+        const cycle = 7;
+        const phase = (room.timeRemaining) % cycle;
+        if (phase < 2) {
+            p.inputs = { up: false, down: false, left: false, right: false, kick: false };
+            p.lastDecision = { ...p.inputs };
+            return;
+        }
 
         // Reset inputs
         p.inputs = { up: false, down: false, left: false, right: false, kick: false };

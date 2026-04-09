@@ -312,12 +312,14 @@ document.getElementById('btn-lobby-leave').onclick = () => {
     gameStatus = 'LOBBY';
     gameLayer.classList.add('hidden');
     uiLayer.classList.remove('hidden');
+    document.getElementById('chat-messages').innerHTML = '';
     loadRooms();
     showModal(roomListModal);
 };
 
 document.getElementById('btn-leave-room').onclick = () => {
     socket.emit('returnToLobby');
+    document.getElementById('chat-messages').innerHTML = '';
 };
 
 socket.on('showBracket', (bracketData) => {
@@ -408,6 +410,7 @@ socket.on('goalScored', (data) => {
 
 socket.on('gameEnded', (result) => {
     gameStatus = 'LOBBY';
+    document.getElementById('chat-messages').innerHTML = '';
     if (result && result.winner) {
         const color = result.winner === 'red' ? '#ef4444' : '#3b82f6';
         showCelebration(
@@ -460,12 +463,17 @@ function goToCourt() {
 }
 
 let gameState = null;
+let previousGameState = null;
 let lastStateTime = Date.now();
 let localPlayerPos = { x: 0, y: 0, vx: 0, vy: 0 };
 
 socket.on('gameState', state => {
     if (gameStatus !== 'PLAYING') return;
+    
+    previousGameState = gameState; // Store previous to interpolate
+    gameState = state;
     lastStateTime = Date.now();
+
     if (state.fieldWidth) {
         FIELD_W = state.fieldWidth;
         FIELD_H = state.fieldHeight;
@@ -489,8 +497,6 @@ socket.on('gameState', state => {
             localPlayerPos.vy = me.vy;
         }
     }
-
-    gameState = state;
 
     document.getElementById('score-red').innerText = state.score.red;
     document.getElementById('score-blue').innerText = state.score.blue;
@@ -516,6 +522,12 @@ function drawHexagon(x, y, r) {
 function render() {
     if (!gameState) { requestAnimationFrame(render); return; }
     
+    const now = Date.now();
+    const tickDuration = 1000 / 64; 
+    let blend = (now - lastStateTime) / tickDuration;
+    if (blend > 1.0) blend = 1.0;
+    if (blend < 0) blend = 0;
+
     ctx.clearRect(0, 0, FIELD_W, FIELD_H);
     for (let x = 0; x < FIELD_W; x += 120) {
         ctx.fillStyle = x % 240 === 0 ? '#4ade80' : '#3dd56a';
@@ -539,13 +551,19 @@ function render() {
         let drawX = p.x;
         let drawY = p.y;
 
-        // Apply local prediction if it's the player's own circle
+        // Apply Local Response for Player 1
         if (p.id === socket.id) {
-            // Soft-reconciliation loop: nudge local position toward server ground truth
-            localPlayerPos.x += (p.x - localPlayerPos.x) * 0.25;
-            localPlayerPos.y += (p.y - localPlayerPos.y) * 0.25;
+            localPlayerPos.x += (p.x - localPlayerPos.x) * 0.15;
+            localPlayerPos.y += (p.y - localPlayerPos.y) * 0.15;
             drawX = localPlayerPos.x;
             drawY = localPlayerPos.y;
+        } else if (previousGameState) {
+            // Interpolate others
+            const prevP = previousGameState.players.find(pp => pp.id === p.id);
+            if (prevP) {
+                drawX = prevP.x + (p.x - prevP.x) * blend;
+                drawY = prevP.y + (p.y - prevP.y) * blend;
+            }
         }
 
         ctx.beginPath(); ctx.arc(drawX, drawY, p.radius, 0, Math.PI * 2);
@@ -569,8 +587,16 @@ function render() {
     });
 
     const b = gameState.ball;
+    let drawBX = b.x;
+    let drawBY = b.y;
+
+    if (previousGameState) {
+        drawBX = previousGameState.ball.x + (b.x - previousGameState.ball.x) * blend;
+        drawBY = previousGameState.ball.y + (b.y - previousGameState.ball.y) * blend;
+    }
+
     ctx.save();
-    ctx.translate(b.x, b.y);
+    ctx.translate(drawBX, drawBY);
     // Draw ball body
     ctx.beginPath(); ctx.arc(0, 0, b.radius, 0, Math.PI * 2); ctx.fillStyle = '#fff'; ctx.fill();
     ctx.lineWidth = 2; ctx.strokeStyle = '#000'; ctx.stroke();
