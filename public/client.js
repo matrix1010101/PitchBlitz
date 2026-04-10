@@ -440,6 +440,20 @@ let FIELD_H = 600;
 let GT = 200;
 let GB = 400;
 
+const MAP_THEMES = {
+    classic:  { grassA: '#4ade80', grassB: '#3dd56a', border: '#166534' },
+    arctic:   { grassA: '#7dd3fc', grassB: '#38bdf8', border: '#075985' },
+    desert:   { grassA: '#fde047', grassB: '#facc15', border: '#854d0e' },
+    midnight: { grassA: '#a78bfa', grassB: '#8b5cf6', border: '#4c1d95' }
+};
+
+let crowdSeed = Array.from({length: 40}, () => ({
+    x: Math.random() * 1200,
+    y: Math.random() > 0.5 ? -40 : 640,
+    color: Math.random() > 0.5 ? '#ef4444' : '#3b82f6',
+    offset: Math.random() * Math.PI * 2
+}));
+
 function resizeCanvas() {
     const ratio = FIELD_W / FIELD_H;
     let w = window.innerWidth;
@@ -519,18 +533,40 @@ function drawHexagon(x, y, r) {
     ctx.closePath();
 }
 
+function drawCrowd(theme) {
+    const now = Date.now();
+    crowdSeed.forEach(fan => {
+        const bounce = Math.sin(now / 200 + fan.offset) * 5;
+        ctx.beginPath();
+        const fanY = fan.y < 0 ? fan.y + bounce : fan.y - bounce;
+        ctx.arc(fan.x, fanY, 8, 0, Math.PI * 2);
+        ctx.fillStyle = fan.color;
+        ctx.fill();
+        ctx.lineWidth = 2; ctx.strokeStyle = '#000'; ctx.stroke();
+    });
+}
+
 function render() {
     if (!gameState) { requestAnimationFrame(render); return; }
     
+    const theme = MAP_THEMES[gameState.mapTheme] || MAP_THEMES.classic;
     const now = Date.now();
     const tickDuration = 1000 / 64; 
     let blend = (now - lastStateTime) / tickDuration;
-    if (blend > 1.0) blend = 1.0;
+    if (blend > 1.2) blend = 1.2; // Allow slight extrapolation to hide jitter
     if (blend < 0) blend = 0;
 
+    // Draw Stadium Background
+    ctx.fillStyle = theme.border;
+    ctx.fillRect(-100, -100, FIELD_W + 200, FIELD_H + 200);
+
+    // Draw Crowd
+    drawCrowd(theme);
+
+    // Draw Pitch
     ctx.clearRect(0, 0, FIELD_W, FIELD_H);
     for (let x = 0; x < FIELD_W; x += 120) {
-        ctx.fillStyle = x % 240 === 0 ? '#4ade80' : '#3dd56a';
+        ctx.fillStyle = x % 240 === 0 ? theme.grassA : theme.grassB;
         ctx.fillRect(x, 0, 120, FIELD_H);
     }
     ctx.strokeStyle = 'rgba(255,255,255,0.7)'; ctx.lineWidth = 3;
@@ -553,16 +589,18 @@ function render() {
 
         // Apply Local Response for Player 1
         if (p.id === socket.id) {
-            localPlayerPos.x += (p.x - localPlayerPos.x) * 0.15;
-            localPlayerPos.y += (p.y - localPlayerPos.y) * 0.15;
+            localPlayerPos.x += (p.x - localPlayerPos.x) * 0.2;
+            localPlayerPos.y += (p.y - localPlayerPos.y) * 0.2;
             drawX = localPlayerPos.x;
             drawY = localPlayerPos.y;
         } else if (previousGameState) {
-            // Interpolate others
+            // Smooth Interpolation with velocity-informed extrapolation for zero-lag visuals
             const prevP = previousGameState.players.find(pp => pp.id === p.id);
             if (prevP) {
-                drawX = prevP.x + (p.x - prevP.x) * blend;
-                drawY = prevP.y + (p.y - prevP.y) * blend;
+                const vx = (p.x - prevP.x);
+                const vy = (p.y - prevP.y);
+                drawX = p.x + vx * (blend - 1);
+                drawY = p.y + vy * (blend - 1);
             }
         }
 
@@ -591,8 +629,10 @@ function render() {
     let drawBY = b.y;
 
     if (previousGameState) {
-        drawBX = previousGameState.ball.x + (b.x - previousGameState.ball.x) * blend;
-        drawBY = previousGameState.ball.y + (b.y - previousGameState.ball.y) * blend;
+        const vbx = (b.x - previousGameState.ball.x);
+        const vby = (b.y - previousGameState.ball.y);
+        drawBX = b.x + vbx * (blend - 1);
+        drawBY = b.y + vby * (blend - 1);
     }
 
     ctx.save();

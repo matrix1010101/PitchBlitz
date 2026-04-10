@@ -72,6 +72,7 @@ io.on('connection', socket => {
             timeLimit: 3,
             scoreLimit: 3,
             ticksPassed: 0,
+            mapTheme: ['classic', 'arctic', 'desert', 'midnight'][Math.floor(Math.random() * 4)],
             tournament: { leg: 1, aggRed: 0, aggBlue: 0 }
         };
         ROOMS.set(id, room);
